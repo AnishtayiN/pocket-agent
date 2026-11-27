@@ -17,10 +17,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Runs the agent loop: model (streaming, with thinking) -> tool calls ->
- *  results -> model, until a final answer. The agent has a name and a
- *  long-term memory that is injected into every session. Web search is its
- *  default mode for factual questions. */
+/** The agent's work loop, built so thinking actually DOES something:
+ *  1) Work loop — the model reasons (streamed live), calls tools, repeats.
+ *     If it tries to answer a factual question without searching, it is
+ *     pushed back once to search first.
+ *  2) Verification — a factual answer is reviewed by a strict second call;
+ *     if it comes back incomplete, the loop runs again with the gaps as an
+ *     explicit assignment, and only the improved answer is delivered.
+ *  The agent has a name and a long-term memory injected into every session. */
 class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings = Settings(app)
@@ -224,6 +228,14 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Mutable state shared across one turn's work + verification passes. */
+    private class TurnState {
+        val sources = LinkedHashSet<String>()
+        var lastWrittenFile: String? = null
+        var reasoning: String? = null
+        var nudged = false
+    }
+
     private fun runAgent() {
         isBusy.value = true
         stopRequested = false
@@ -231,125 +243,49 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         reasoningText.value = ""
         agentJob = viewModelScope.launch {
             try {
+                val state = TurnState()
+                val lastUserText = messages.lastOrNull { it.role == "user" }?.content ?: ""
                 val apiMessages = buildApiMessages()
-                var finished = false
-                var rounds = 0
-                var lastWrittenFile: String? = null
-                val turnSources = LinkedHashSet<String>()
-                var turnReasoning: String? = null
-                while (!finished && rounds < 12) {
-                    rounds++
-                    statusText.value = "در حال فکر کردن…"
-                    streamingText.value = ""
-                    reasoningText.value = ""
-                    val reply = client.chat(apiMessages, ToolExecutor.specs()) { ev ->
-                        when (ev) {
-                            is StreamEvent.Content -> {
-                                streamingText.value += ev.text
-                                statusText.value = "در حال نوشتن پاسخ…"
-                            }
-                            is StreamEvent.Reasoning -> {
-                                reasoningText.value += ev.text
-                                statusText.value = "در حال فکر کردن…"
-                            }
-                        }
-                    }
-                    if (!reply.reasoning.isNullOrBlank()) {
-                        turnReasoning = reply.reasoning
-                    } else if (reasoningText.value.isNotBlank()) {
-                        turnReasoning = reasoningText.value
-                    }
-                    val streamed = streamingText.value
-                    streamingText.value = ""
-                    if (reply.toolCalls.isEmpty()) {
-                        val answer = reply.content?.takeIf { it.isNotBlank() }
-                            ?: streamed.takeIf { it.isNotBlank() }
-                            ?: "پاسخی برنگشت. دوباره تلاش کن."
-                        messages.add(
-                            ChatMsg(
-                                role = "assistant",
-                                content = answer,
-                                filePath = lastWrittenFile,
-                                sources = if (turnSources.isEmpty()) null
-                                else turnSources.joinToString("\n"),
-                                reasoning = turnReasoning
-                            )
-                        )
-                        finished = true
-                    } else {
-                        val assistantMsg = JSONObject().apply {
+
+                var finalAnswer = runLoop(apiMessages, state, lastUserText)
+
+                // Verification: factual answers (built on web sources) are
+                // reviewed; an incomplete verdict sends the loop back to work
+                // with the gaps as the assignment. Only then is the answer
+                // delivered — thinking that visibly changes the result.
+                if (finalAnswer != null && state.sources.isNotEmpty() && !stopRequested) {
+                    val gaps = verifyAnswer(finalAnswer, state.sources)
+                    if (gaps != null && !stopRequested) {
+                        apiMessages.put(JSONObject().apply {
                             put("role", "assistant")
-                            put("content", reply.content ?: JSONObject.NULL)
-                            val arr = JSONArray()
-                            reply.toolCalls.forEach { tc ->
-                                arr.put(JSONObject().apply {
-                                    put("id", tc.id)
-                                    put("type", "function")
-                                    put("function", JSONObject().apply {
-                                        put("name", tc.name)
-                                        put("arguments", tc.arguments)
-                                    })
-                                })
-                            }
-                            put("tool_calls", arr)
-                        }
-                        apiMessages.put(assistantMsg)
-                        if (!reply.content.isNullOrBlank()) {
-                            messages.add(ChatMsg(role = "assistant", content = reply.content))
-                        }
-                        for (tc in reply.toolCalls) {
-                            val label = ToolExecutor.label(tc.name)
-                            statusText.value = label + "…"
-                            val rowIndex = messages.size
-                            messages.add(
-                                ChatMsg(
-                                    role = "tool-ui",
-                                    content = "",
-                                    toolLabel = label,
-                                    toolName = tc.name,
-                                    toolDetail = toolDetail(tc.name, tc.arguments),
-                                    toolDone = false
-                                )
+                            put("content", finalAnswer)
+                        })
+                        apiMessages.put(JSONObject().apply {
+                            put("role", "user")
+                            put(
+                                "content",
+                                "[بازبینی داخلی] پاسخ قبلی تو این کاستی‌ها را داشت: $gaps\n" +
+                                    "حالا با جستجو و ابزار آن‌ها را برطرف کن و پاسخ نهاییِ کامل و اصلاح‌شده را بنویس. " +
+                                    "فقط پاسخ نهایی را بنویس، بدون اشاره به این بازبینی."
                             )
-                            persist()
-                            val outcome = tools.execute(tc.name, tc.arguments)
-                            if (rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
-                                messages[rowIndex] = messages[rowIndex].copy(toolDone = true)
-                            }
-                            turnSources.addAll(outcome.sources)
-                            if (tc.name == "write_file") {
-                                val fname = try {
-                                    JSONObject(tc.arguments).optString("name")
-                                } catch (e: Exception) {
-                                    ""
-                                }
-                                if (fname.isNotBlank()) {
-                                    val f = File(getApplication<Application>().filesDir, "workspace/$fname")
-                                    if (f.exists()) lastWrittenFile = f.absolutePath
-                                }
-                            }
-                            apiMessages.put(JSONObject().apply {
-                                put("role", "tool")
-                                put("tool_call_id", tc.id)
-                                put("content", outcome.text)
-                            })
-                            if (outcome.imagePath != null) {
-                                messages.add(
-                                    ChatMsg(
-                                        role = "assistant",
-                                        content = "عکس آماده شد 🎨",
-                                        imagePath = outcome.imagePath
-                                    )
-                                )
-                            }
-                            if (tc.name == "save_memory" || tc.name == "delete_memory") {
-                                refreshMemory()
-                            }
-                            persist()
-                        }
+                        })
+                        val improved = runLoop(apiMessages, state, lastUserText)
+                        if (improved != null) finalAnswer = improved
                     }
                 }
-                if (!finished) {
+
+                if (finalAnswer != null) {
+                    messages.add(
+                        ChatMsg(
+                            role = "assistant",
+                            content = finalAnswer,
+                            filePath = state.lastWrittenFile,
+                            sources = if (state.sources.isEmpty()) null
+                            else state.sources.joinToString("\n"),
+                            reasoning = state.reasoning
+                        )
+                    )
+                } else if (!stopRequested) {
                     messages.add(ChatMsg(role = "assistant", content = "کار طولانی شد و متوقفش کردم. ساده‌تر بپرس یا دوباره تلاش کن."))
                 }
             } catch (e: CancellationException) {
@@ -378,6 +314,223 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                 persist()
             }
         }
+    }
+
+    /** One work loop: reason -> tools -> reason … Returns the final answer
+     *  text, or null if the round limit was hit. Intermediate messages and
+     *  tool cards are added to the UI as they happen; the final answer is
+     *  NOT added here — the caller delivers it after verification. */
+    private suspend fun runLoop(
+        apiMessages: JSONArray,
+        state: TurnState,
+        lastUserText: String
+    ): String? {
+        var rounds = 0
+        while (rounds < 12) {
+            rounds++
+            statusText.value = "در حال فکر کردن…"
+            streamingText.value = ""
+            reasoningText.value = ""
+            val reply = client.chat(apiMessages, ToolExecutor.specs()) { ev ->
+                when (ev) {
+                    is StreamEvent.Content -> {
+                        streamingText.value += ev.text
+                        statusText.value = "در حال نوشتن پاسخ…"
+                    }
+                    is StreamEvent.Reasoning -> {
+                        reasoningText.value += ev.text
+                        statusText.value = "در حال فکر کردن…"
+                    }
+                }
+            }
+            if (!reply.reasoning.isNullOrBlank()) {
+                state.reasoning = reply.reasoning
+            } else if (reasoningText.value.isNotBlank()) {
+                state.reasoning = reasoningText.value
+            }
+            val streamed = streamingText.value
+            streamingText.value = ""
+            if (reply.toolCalls.isEmpty()) {
+                val answer = reply.content?.takeIf { it.isNotBlank() }
+                    ?: streamed.takeIf { it.isNotBlank() }
+                // Anti-laziness gate: a factual question must not be answered
+                // from thin air. Push the model back to search — once.
+                if (answer != null && !state.nudged && state.sources.isEmpty() &&
+                    looksFactualQuestion(lastUserText)
+                ) {
+                    state.nudged = true
+                    apiMessages.put(JSONObject().apply {
+                        put("role", "assistant")
+                        put("content", answer)
+                    })
+                    apiMessages.put(JSONObject().apply {
+                        put("role", "user")
+                        put(
+                            "content",
+                            "[دستور سیستمی] این یک سؤال اطلاعاتی است و هنوز هیچ جستجوی وبی انجام نشده. " +
+                                "پاسخ از حافظه قبول نیست: اول با web_search یا web_research در وب تحقیق کن، " +
+                                "بعد بر اساس نتایج واقعی پاسخ نهایی کامل را بنویس."
+                        )
+                    })
+                    statusText.value = "جستجوی وب برای پاسخ کامل‌تر…"
+                    continue
+                }
+                return answer ?: "پاسخی برنگشت. دوباره تلاش کن."
+            }
+            val assistantMsg = JSONObject().apply {
+                put("role", "assistant")
+                put("content", reply.content ?: JSONObject.NULL)
+                val arr = JSONArray()
+                reply.toolCalls.forEach { tc ->
+                    arr.put(JSONObject().apply {
+                        put("id", tc.id)
+                        put("type", "function")
+                        put("function", JSONObject().apply {
+                            put("name", tc.name)
+                            put("arguments", tc.arguments)
+                        })
+                    })
+                }
+                put("tool_calls", arr)
+            }
+            apiMessages.put(assistantMsg)
+            if (!reply.content.isNullOrBlank()) {
+                messages.add(ChatMsg(role = "assistant", content = reply.content))
+            }
+            for (tc in reply.toolCalls) {
+                val label = ToolExecutor.label(tc.name)
+                statusText.value = label + "…"
+                val rowIndex = messages.size
+                messages.add(
+                    ChatMsg(
+                        role = "tool-ui",
+                        content = "",
+                        toolLabel = label,
+                        toolName = tc.name,
+                        toolDetail = toolDetail(tc.name, tc.arguments),
+                        toolDone = false
+                    )
+                )
+                persist()
+                val outcome = tools.execute(tc.name, tc.arguments)
+                if (rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
+                    messages[rowIndex] = messages[rowIndex].copy(toolDone = true)
+                }
+                state.sources.addAll(outcome.sources)
+                if (tc.name == "write_file") {
+                    val fname = try {
+                        JSONObject(tc.arguments).optString("name")
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    if (fname.isNotBlank()) {
+                        val f = File(getApplication<Application>().filesDir, "workspace/$fname")
+                        if (f.exists()) state.lastWrittenFile = f.absolutePath
+                    }
+                }
+                apiMessages.put(JSONObject().apply {
+                    put("role", "tool")
+                    put("tool_call_id", tc.id)
+                    put("content", outcome.text)
+                })
+                if (outcome.imagePath != null) {
+                    messages.add(
+                        ChatMsg(
+                            role = "assistant",
+                            content = "عکس آماده شد 🎨",
+                            imagePath = outcome.imagePath
+                        )
+                    )
+                }
+                if (tc.name == "save_memory" || tc.name == "delete_memory") {
+                    refreshMemory()
+                }
+                persist()
+            }
+        }
+        return null
+    }
+
+    /** Strict review of a draft factual answer. Returns the gaps if the
+     *  verdict is "incomplete", or null when the answer passes (or the
+     *  review itself fails — the draft is kept either way). */
+    private suspend fun verifyAnswer(answer: String, sources: Set<String>): String? {
+        val rowIndex = messages.size
+        messages.add(
+            ChatMsg(
+                role = "tool-ui",
+                content = "",
+                toolLabel = "بازبینی پاسخ",
+                toolName = "verify",
+                toolDetail = "بررسی کامل‌بودن و درستی جواب",
+                toolDone = false
+            )
+        )
+        persist()
+        statusText.value = "بازبینی و تکمیل پاسخ…"
+        streamingText.value = ""
+        reasoningText.value = ""
+        val question = messages.lastOrNull { it.role == "user" }?.content ?: ""
+        val verifyMessages = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "system")
+                put(
+                    "content",
+                    "تو یک بازبین سخت‌گیر و دقیق هستی. وظیفه‌ات بررسی یک پاسخ پیش‌نویس است: " +
+                        "آیا سؤال کاربر را کامل جواب می‌دهد؟ آیا ادعاهایش با منابع سازگار و دقیق‌اند؟ " +
+                        "آیا بخش مهمی جا افتاده یا چیزی مبهم یا احتمالاً اشتباه است؟ " +
+                        "فقط و فقط به یکی از این دو شکل جواب بده: اگر پاسخ کامل و قابل قبول است دقیقاً بنویس: کامل " +
+                        "اگر ناقص است بنویس: ناقص: و بعد خیلی کوتاه و مشخص بگو چه چیزی کم است یا باید اصلاح شود."
+                )
+            })
+            put(JSONObject().apply {
+                put("role", "user")
+                put(
+                    "content",
+                    "سؤال کاربر:\n$question\n\nپاسخ پیش‌نویس:\n${answer.take(6000)}\n\n" +
+                        "منابع استفاده‌شده:\n${sources.joinToString("\n")}"
+                )
+            })
+        }
+        val verdict = try {
+            client.chat(verifyMessages, null) { }.content?.trim()
+        } catch (e: Exception) {
+            null
+        }
+        val gaps: String? = when {
+            verdict == null -> null
+            verdict.startsWith("ناقص") -> verdict.removePrefix("ناقص")
+                .removePrefix(":").removePrefix("：").removePrefix("است").trim()
+                .take(600)
+                .ifBlank { "پاسخ ناقص تشخیص داده شد؛ اطلاعات بیشتری لازم است" }
+            else -> null
+        }
+        if (rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
+            messages[rowIndex] = messages[rowIndex].copy(
+                toolDone = true,
+                toolDetail = if (gaps == null) "پاسخ کامل و درست تأیید شد ✓"
+                else "کاستی پیدا شد — در حال تکمیل پاسخ…"
+            )
+        }
+        persist()
+        return gaps
+    }
+
+    /** Heuristic: does this user message look like a factual question that
+     *  must be answered from the web rather than from memory? Deliberately
+     *  excludes coding requests and on-device questions. */
+    private fun looksFactualQuestion(text: String): Boolean {
+        val t = text.trim()
+        if (t.length < 8) return false
+        val codeWords = listOf("کد", "بنویس", "بساز", "اسکریپت", "پایتون", "html", "فایل", "برنامه")
+        if (codeWords.any { t.contains(it) }) return false
+        val deviceWords = listOf("شارژ", "باتری", "گوشیم", "گوشی من", "حافظه گوشی")
+        if (deviceWords.any { t.contains(it) }) return false
+        val qWords = listOf(
+            "؟", "?", "چیست", "چیه", "چه", "کی", "کجا", "چرا", "چطور", "چگونه",
+            "آیا", "کدام", "چند", "اخبار", "قیمت", "تاریخ"
+        )
+        return qWords.any { t.contains(it) }
     }
 
     private fun buildApiMessages(): JSONArray {
@@ -417,10 +570,11 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
 شخصیت: گرم، باهوش، کنجکاو و کمی شوخ‌طبع. با کاربر مثل یک دوست صمیمی و قابل‌اعتماد حرف می‌زنی. به همان زبانی جواب بده که کاربر می‌نویسد (معمولاً فارسی). جواب‌ها را به‌اندازه نگه دار: نه خشک و تک‌کلمه‌ای، نه پرحرف.
 
-روش کار پیش‌فرض — فکر کردن و جستجو (خیلی مهم):
-- حالت thinking برایت فعال است: قبل از هر جواب، قدم‌به‌قدم و با دقت فکر کن؛ عجله نکن.
+روش کار — فکرِ واقعی، نه نمایشی (خیلی مهم):
+- قبل از هر اقدام، واقعاً و قدم‌به‌قدم فکر کن: سؤال دقیقاً چه می‌خواهد؟ چه می‌دانی و چه نمی‌دانی؟ برای بخش‌هایی که نمی‌دانی یا ممکن است تازه باشند، برنامه جستجو بچین و اجراش کن. فکر کردن تو باید به اقدام برسد: جستجو، خواندن منبع، اجرای ابزار. فکری که به هیچ اقدامی نرسد، فکر نیست.
 - تو یک ایجنتِ محقق هستی، نه یک دانشنامه ثابت و قدیمی. جستجوی وب حالت عادی توست: برای هر سؤال اطلاعاتی و واقعی — حتی سؤال‌هایی که فکر می‌کنی جوابشان را می‌دانی — اول در وب جستجو کن و جواب را بر اساس نتایج تازه و واقعی بساز، نه حدس از حافظه. دانش درونی‌ات ممکن است قدیمی یا ناقص باشد؛ وب، منبع اصلی توست.
 - برای سؤال‌های مهم، پیچیده یا چندبخشی از web_research استفاده کن (چند منبع را کامل می‌خواند و اطلاعات کامل جمع می‌کند). برای سؤال‌های ساده‌تر یک یا دو web_search کافی است و اگر خلاصه‌ها کافی نبود، نتیجه مهم را با web_fetch کامل بخوان. اگر نتایج اول ناقص بود، با عبارت متفاوت دوباره جستجو کن.
+- پاسخ‌های اطلاعاتی تو قبل از تحویل به کاربر بازبینی می‌شوند؛ اگر ناقص یا نادقیق باشند برگشت می‌خورند و باید کاملشان کنی. پس از همان اول کامل و دقیق جواب بده.
 - فقط این‌ها بدون جستجو جواب داده می‌شوند: گپ‌وگفت و احوال‌پرسی، ریاضی و منطق و کدنویسی، سؤال درباره خود گوشی کاربر (با ابزارهای دستگاه)، و چیزهایی که در حافظه بلندمدتت از کاربر داری.
 - جواب نهایی را کامل، دقیق و ساخت‌یافته بنویس: وقتی جواب طولانی است از تیتر (##)، فهرست و **متن پررنگ** استفاده کن. در پایانِ جواب‌هایی که از وب استفاده کرده‌ای، بخش کوتاهی به نام «منابع» با لینک‌های واقعی نتایج بیاور.
 
