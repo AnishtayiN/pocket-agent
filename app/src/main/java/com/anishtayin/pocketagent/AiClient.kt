@@ -82,10 +82,13 @@ class AiClient {
     /** One agent round. Tries, in order: primary streaming, primary plain,
      *  fallback streaming, fallback plain. A streaming attempt that already
      *  produced output returns that partial output instead of failing over,
-     *  so the user never loses a half-written answer. */
+     *  so the user never loses a half-written answer.
+     *  [thinking] = deep reasoning; false asks the provider for minimal
+     *  reasoning effort (fast, direct API answer). */
     suspend fun chat(
         messages: JSONArray,
         tools: JSONArray?,
+        thinking: Boolean = true,
         onEvent: suspend (StreamEvent) -> Unit
     ): AiReply {
         var lastError: AiException? = null
@@ -100,9 +103,9 @@ class AiClient {
                 try {
                     pace(provider.paceMs)
                     return if (stream) {
-                        streamChat(provider, messages, tools, onEvent)
+                        streamChat(provider, messages, tools, thinking, onEvent)
                     } else {
-                        plainChat(provider, messages, tools, onEvent)
+                        plainChat(provider, messages, tools, thinking, onEvent)
                     }
                 } catch (e: AiException) {
                     lastError = e
@@ -121,12 +124,18 @@ class AiClient {
         provider: Provider,
         messages: JSONArray,
         tools: JSONArray?,
-        stream: Boolean
+        stream: Boolean,
+        thinking: Boolean
     ): String = JSONObject().apply {
         put("model", provider.model)
         put("messages", messages)
         put("max_tokens", 8000)
-        if (provider.reasoningParam) put("reasoning", true)
+        if (provider.reasoningParam) {
+            put("reasoning", thinking)
+        } else if (!thinking) {
+            // gpt-oss-style providers: minimal reasoning = fast direct answer
+            put("reasoning_effort", "low")
+        }
         if (stream) put("stream", true)
         if (tools != null) {
             put("tools", tools)
@@ -150,9 +159,10 @@ class AiClient {
         provider: Provider,
         messages: JSONArray,
         tools: JSONArray?,
+        thinking: Boolean,
         onEvent: suspend (StreamEvent) -> Unit
     ): AiReply = withContext(Dispatchers.IO) {
-        val call = http.newCall(buildRequest(provider, buildBody(provider, messages, tools, false)))
+        val call = http.newCall(buildRequest(provider, buildBody(provider, messages, tools, false, thinking)))
         activeCall = call
         try {
             call.execute().use { resp ->
@@ -184,9 +194,10 @@ class AiClient {
         provider: Provider,
         messages: JSONArray,
         tools: JSONArray?,
+        thinking: Boolean,
         onEvent: suspend (StreamEvent) -> Unit
     ): AiReply = withContext(Dispatchers.IO) {
-        val call = http.newCall(buildRequest(provider, buildBody(provider, messages, tools, true)))
+        val call = http.newCall(buildRequest(provider, buildBody(provider, messages, tools, true, thinking)))
         activeCall = call
         val content = StringBuilder()
         val reasoning = StringBuilder()
