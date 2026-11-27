@@ -323,6 +323,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
             "open_dialer", "compose_sms" -> args.optString("number").ifBlank { null }
             "compose_email" -> args.optString("to").ifBlank { null }
             "open_maps" -> args.optString("query").ifBlank { null }
+            "company_reviews" -> args.optString("query").ifBlank { null }
             "set_timer" -> args.optInt("seconds").takeIf { it > 0 }?.let { "$it ثانیه" }
             "set_alarm" -> "%02d:%02d".format(args.optInt("hour"), args.optInt("minute"))
             "add_calendar_event" -> args.optString("title").ifBlank { null }
@@ -671,7 +672,19 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
             put("role", "system")
             put("content", buildSystemPrompt())
         })
-        for (m in messages) {
+        // The provider's context window is 32k tokens (input + answer).
+        // Keep the NEWEST history that fits a safe character budget (~20k
+        // tokens) so long conversations never overflow the window.
+        val history = messages.filter { it.role == "user" || it.role == "assistant" }
+        val kept = ArrayDeque<ChatMsg>()
+        var budget = 60_000
+        for (m in history.asReversed()) {
+            val size = m.content.length + (m.attachmentNote?.length ?: 0) + 64
+            if (kept.isNotEmpty() && size > budget) break
+            budget -= size
+            kept.addFirst(m)
+        }
+        for (m in kept) {
             when (m.role) {
                 "user" -> arr.put(JSONObject().apply {
                     put("role", "user")
@@ -723,7 +736,7 @@ ${memoryStore.asPromptText()}
 پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
 - وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
-- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن؛ برای آب‌وهوا از get_weather (اسم شهر را انگلیسی بده)؛ برای قیمت ارز و تبدیل پول از get_exchange_rate؛ برای «این چیست/کیست»های دانشنامه‌ای wikipedia_summary منبع خوبی است.
+- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن؛ برای آب‌وهوا از get_weather (اسم شهر را انگلیسی بده)؛ برای قیمت ارز و تبدیل پول از get_exchange_rate؛ برای «این چیست/کیست»های دانشنامه‌ای wikipedia_summary منبع خوبی است؛ برای اعتبار و نظرات مردم درباره شرکت‌ها و برندها از company_reviews.
 - برای «یادم بنداز»، «بیدارم کن» و زمان‌بندی از set_alarm یا set_timer استفاده کن؛ برای قرار و جلسه از add_calendar_event.
 - برای «زنگ بزن» شماره‌گیر را با open_dialer باز کن؛ برای پیامک از compose_sms و برای ایمیل از compose_email (این‌ها پیش‌نویس را باز می‌کنند و ارسال نهایی با خود کاربر است — همین را بگو). برای «مسیر/آدرس» از open_maps.
 - وقتی کاربر QR کد خواست با create_qr بساز؛ تصویرش خودکار در چت نشان داده می‌شود.
