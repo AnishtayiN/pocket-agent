@@ -13,8 +13,8 @@ android {
         applicationId = "com.anishtayin.pocketagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "8.1.0"
+        versionCode = 10
+        versionName = "9.0.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
