@@ -3,8 +3,11 @@
 An Android AI agent app: a cloud AI model (via API) with real tools on the phone.
 The model thinks; the app acts — research the web, run Python, control the phone, speak and listen, and report back.
 
-## Features (v8.0.0)
+## Features (v8.1.0)
 
+- **Hardened AI client (per the provider's integration spec)** — up to 3 retries with exponential backoff (2s→4s, capped 5s) honoring `Retry-After`; daily-quota 429s are detected and reported with the 00:00 UTC reset time instead of pointless retries; `max_tokens` 8192; history is trimmed to a safe budget so long chats never overflow the provider's 32k-token context window
+- **Resilient web search** — Keenable first, automatic fallback to the keyless FreeSerp global index when it fails or returns nothing
+- **Company reputation tool** — `company_reviews`: star rating, review count and profile link for any company/domain (Trustburn, keyless)
 - **Thinking toggle** — «فکر عمیق» (deep thinking: native reasoning streamed live, research nudge, answer verification) vs «پاسخ سریع» (fast mode: the plain API answer with minimal reasoning effort, no extra passes). One-tap chip above the composer + a switch in Settings
 - **A real agent loop** — the model plans, calls tools, reads results and continues until the task is done (up to 16 rounds). In thinking mode, factual answers are verified by a strict second pass and sent back for completion if they are incomplete
 - **Live task plans** — for multi-step work the agent shows a plan checklist in the chat and ticks steps off as it goes (`update_plan`)
@@ -28,7 +31,7 @@ The model thinks; the app acts — research the web, run Python, control the pho
 
 - **Kotlin** + Jetpack Compose — native Android API access, no bridge tax
 - `AiClient` — OpenAI-compatible Chat Completions client with SSE streaming (content + reasoning), retry/backoff, pacing and provider fallback
-- `ToolExecutor` — 37 tool implementations; `AgentViewModel` — the agent loop, thinking/fast modes, verification pass and live plan state
+- `ToolExecutor` — 38 tool implementations; `AgentViewModel` — the agent loop, thinking/fast modes, verification pass and live plan state
 - `Voice` — on-device TTS + speech recognition; `Processing` — OCR/PDF/text extraction; `MemoryStore` — long-term memory
 
 ## Honest limits
