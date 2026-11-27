@@ -1,38 +1,39 @@
 # Pocket Agent — ایجنت جیبی
 
 An Android AI agent app: a cloud AI model (via API) with real tools on the phone.
-The model thinks; the app acts — search the web, read pages, generate images, check the battery, work with files, and report back.
+The model thinks; the app acts — research the web, run Python, control the phone, speak and listen, and report back.
 
-## Features (v4.0.0)
+## Features (v7.0.0)
 
-- **Writes, runs and debugs real Python on the phone** — ask for code and the agent writes it to a file with the right extension, executes it on-device (Chaquopy, Python 3), reads the traceback, fixes the file and re-runs until it works — then **delivers the file in the chat** with open/share actions
-- **Light, bright UI** — white surfaces, soft shadows, one cyan→azure accent, animated ambient orbs, rotating-ring avatar, gradient headline, typing indicator, icon suggestion chips, message timestamps, and proper **code-block rendering** (dark card, language label, copy button)
-- **File & image processing on-device** — attach an image or a document right from the chat:
-  - Images: OCR (ML Kit, Latin script), dominant colors (Palette), dimensions — the results are fed to the agent, which reacts on its own
-  - Files: PDF text extraction (PDFBox), source-code and text files (`.py`, `.html`, `.kt`, … — anything that looks like text), CSV structure — attached files land in the workspace, where the agent can re-read them anytime with `process_file`
-- **An agent with an identity** — it has a name (default «جیبی», changeable in Settings), a warm personal-assistant personality, and a **long-term memory**: durable facts about the user are saved via tools, injected into every session, and viewable/deletable in Settings
-- **Agent loop** — OpenAI-compatible tool calling: the model plans, calls tools, reads results and continues until the task is done (up to 8 rounds)
-- **Tools**
-  - `run_python` / `run_python_file` — execute Python on-device and debug from real output
-  - `web_search` / `web_fetch` — live web search and page reading via Keenable (keyless public tier)
-  - `generate_image` — image generation via Pollinations (keyless), shown right in the chat
-  - `get_battery_info` — charge %, charging status, temperature, voltage, health
-  - `get_device_info` — model, Android version, RAM, storage
-  - `get_current_time`, `write_file` / `read_file` / `list_files` / `process_file` — a private on-device workspace
-  - `save_memory` / `read_memory` / `delete_memory` — the long-term memory
-- **Provider config is internal** (not shown in the app UI): any OpenAI-compatible endpoint, set in `AiConfig` — the default provider is free and keyless
+- **A real agent loop** — the model plans, calls tools, reads results and continues until the task is done (up to 16 rounds). Factual answers are verified by a strict second pass and sent back for completion if they are incomplete
+- **Live task plans** — for multi-step work the agent shows a plan checklist in the chat and ticks steps off as it goes (`update_plan`)
+- **Two-way voice**
+  - Mic button: dictate your message with live on-device transcription (Persian)
+  - Answers can be read aloud (TTS): per-message speaker button, an auto-speak switch in Settings, and a `speak` tool the agent can use itself
+- **Aurora UI** — a deep-space dark theme and a cool porcelain light theme (light/dark/system + quick toggle in the header), drifting ambient aurora orbs, glassy header, rotating-ring avatar, gradient headline, live streaming with reasoning preview, plan cards, icon suggestion chips, scroll-to-bottom button, haptics, and proper markdown + code-block rendering
+- **Writes, runs and debugs real Python on the phone** — Chaquopy (Python 3): the agent writes code to a file, executes it on-device, reads the traceback, fixes and re-runs until it works — then delivers the file in the chat with open/share actions
+- **Phone control tools** — alarm & countdown timer, calendar events, flashlight, vibration, clipboard read/write, network status, open links, share text
+- **Live weather** — current conditions and today's range for any city (`get_weather`, keyless via wttr.in)
+- **File & image processing on-device** — attach an image (OCR via ML Kit, dominant colors, dimensions) or a document (PDF text via PDFBox, source-code/text files, CSV structure); attachments land in the workspace where the agent can re-read them anytime
+- **An agent with an identity** — a name (default «جیبی», changeable in Settings), a warm personality, and a long-term memory: durable facts about the user are saved via tools, injected into every session, and viewable/deletable in Settings
+- **Research tools** — `web_search` / `web_fetch` / `web_research` (searches wide AND reads the top pages) via Keenable's keyless public tier; answers cite real sources as tappable chips
+- **Image generation** — `generate_image` via Pollinations (keyless), shown right in the chat
+- **Device info** — battery (charge, temperature, voltage, health), model, Android version, RAM, storage, current time
+- **Provider config is internal** (not shown in the app UI): any OpenAI-compatible endpoint, set in `AiConfig` — the default provider is free and keyless, with an automatic fallback
 - Builds are arm64-v8a only (the Python runtime ships per-ABI)
 
 ## Architecture
 
 - **Kotlin** + Jetpack Compose — native Android API access, no bridge tax
-- `AiClient` — minimal Chat Completions client with retry/backoff and ~1 request/second pacing
-- `ToolExecutor` — the tool implementations; `AgentViewModel` — the agent loop
+- `AiClient` — OpenAI-compatible Chat Completions client with SSE streaming (content + reasoning), retry/backoff, pacing and provider fallback
+- `ToolExecutor` — 30 tool implementations; `AgentViewModel` — the agent loop, verification pass and live plan state
+- `Voice` — on-device TTS + speech recognition; `Processing` — OCR/PDF/text extraction; `MemoryStore` — long-term memory
 
 ## Honest limits
 
 - The agent can only do what Android lets the app do — permissions are the ceiling
-- The default free provider may refuse some IPs/prompts; if it does, point Settings to another OpenAI-compatible provider
+- Voice features depend on the device having a TTS engine / recognizer (Google services); otherwise they degrade gracefully
+- The default free provider may refuse some IPs/prompts; if it does, point `AiConfig` to another OpenAI-compatible provider
 - Release APKs are signed with a CI-generated keystore: uninstall before reinstalling a newer build
 
 ## Build
