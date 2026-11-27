@@ -11,10 +11,10 @@ android {
 
     defaultConfig {
         applicationId = "com.anishtayin.pocketagent"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "9.0.0"
+        versionCode = 7
+        versionName = "6.1.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
