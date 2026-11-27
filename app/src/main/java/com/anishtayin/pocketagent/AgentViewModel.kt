@@ -9,17 +9,24 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/** Runs the agent loop: model -> tool calls -> results -> model, until a final answer. */
+/** Runs the agent loop: model -> tool calls -> results -> model, until a final answer.
+ *  The agent has a name and a long-term memory that is injected into every session. */
 class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings = Settings(app)
-    private val client = AiClient(settings)
-    private val tools = ToolExecutor(app)
+    val memoryStore = MemoryStore(app.filesDir)
+    private val client = AiClient()
+    private val tools = ToolExecutor(app, memoryStore)
 
     val messages = mutableStateListOf<ChatMsg>()
     val isBusy = mutableStateOf(false)
     val statusText = mutableStateOf("")
+    val agentName = mutableStateOf(settings.agentName)
+    val memoryEntries = mutableStateListOf<String>()
 
     private val historyFile = File(app.filesDir, "history.json")
 
@@ -27,6 +34,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         if (historyFile.exists()) {
             messages.addAll(ChatMsg.listFromJson(historyFile.readText()))
         }
+        refreshMemory()
     }
 
     fun send(text: String) {
@@ -43,10 +51,26 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         historyFile.delete()
     }
 
-    fun updateSettings(baseUrl: String, model: String, apiKey: String) {
-        if (baseUrl.isNotBlank()) settings.baseUrl = baseUrl
-        if (model.isNotBlank()) settings.model = model
-        settings.apiKey = apiKey
+    fun setAgentName(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        settings.agentName = clean
+        agentName.value = clean
+    }
+
+    fun deleteMemoryAt(index: Int) {
+        memoryStore.removeAt(index)
+        refreshMemory()
+    }
+
+    fun clearMemory() {
+        memoryStore.clear()
+        refreshMemory()
+    }
+
+    private fun refreshMemory() {
+        memoryEntries.clear()
+        memoryEntries.addAll(memoryStore.all())
     }
 
     private fun runAgent() {
@@ -56,7 +80,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                 val apiMessages = buildApiMessages()
                 var finished = false
                 var rounds = 0
-                while (!finished && rounds < 6) {
+                while (!finished && rounds < 8) {
                     rounds++
                     statusText.value = "در حال فکر کردن…"
                     val reply = client.chat(apiMessages, ToolExecutor.specs())
@@ -66,7 +90,6 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                         messages.add(ChatMsg(role = "assistant", content = answer))
                         finished = true
                     } else {
-                        // Record the assistant tool-call turn in API format.
                         val assistantMsg = JSONObject().apply {
                             put("role", "assistant")
                             put("content", reply.content ?: JSONObject.NULL)
@@ -107,6 +130,9 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                                     )
                                 )
                             }
+                            if (tc.name == "save_memory" || tc.name == "delete_memory") {
+                                refreshMemory()
+                            }
                             persist()
                         }
                     }
@@ -130,7 +156,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         val arr = JSONArray()
         arr.put(JSONObject().apply {
             put("role", "system")
-            put("content", SYSTEM_PROMPT)
+            put("content", buildSystemPrompt())
         })
         for (m in messages) {
             when (m.role) {
@@ -146,22 +172,29 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         return arr
     }
 
+    private fun buildSystemPrompt(): String {
+        val today = SimpleDateFormat("EEEE d MMMM yyyy", Locale("fa", "IR")).format(Date())
+        return """تو «${agentName.value}» هستی؛ یک ایجنت هوش مصنوعی شخصی که روی گوشی اندرویدی کاربر زندگی می‌کنی — یک همراه و دستیار همیشه‌در‌دسترس، نه یک چت‌بات بی‌نام‌ونشان. امروز $today است.
+
+شخصیت: گرم، باهوش، کنجکاو و کمی شوخ‌طبع. با کاربر مثل یک دوست صمیمی و قابل‌اعتماد حرف می‌زنی. به همان زبانی جواب بده که کاربر می‌نویسد (معمولاً فارسی). جواب‌ها را به‌اندازه نگه دار: نه خشک و تک‌کلمه‌ای، نه پرحرف.
+
+حافظه بلندمدت: تو حافظه داری و بین گفتگوها یادت می‌ماند. هر وقت چیز مهم و ماندگاری درباره کاربر فهمیدی — اسمش، شهرش، علاقه‌ها و سلیقه‌اش، آدم‌های مهم زندگی‌اش، هدف‌ها، پروژه‌ها و تصمیم‌هایش — همان موقع با ابزار save_memory ذخیره‌اش کن، بی‌آن‌که لازم باشد هر بار اعلامش کنی. اگر کاربر گفت چیزی را فراموش کنی، با delete_memory پاکش کن. از چیزهایی که در حافظه داری طبیعی استفاده کن (مثلاً اسمش را صدا بزن) ولی فهرست‌وار تکرارشان نکن.
+آنچه همین حالا در حافظه بلندمدتت هست:
+${memoryStore.asPromptText()}
+
+ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست) و حافظه بلندمدت.
+قوانین:
+- برای اطلاعات تازه یا نامطمئن (اخبار، قیمت‌ها، برنامه مسابقات، هوا و...) حتماً از web_search استفاده کن و در صورت نیاز صفحه را با web_fetch بخوان؛ از حافظه حدس نزن.
+- وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
+- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن.
+- اگر ابزاری خطا داد، صادقانه و کوتاه بگو."""
+    }
+
     private fun persist() {
         try {
             historyFile.writeText(ChatMsg.listToJson(messages.toList()))
         } catch (e: Exception) {
             // history is best-effort
         }
-    }
-
-    companion object {
-        const val SYSTEM_PROMPT = """تو «ایجنت جیبی» هستی؛ یک دستیار هوش مصنوعی که روی گوشی اندرویدی کاربر اجرا می‌شوی و ابزار واقعی داری.
-ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، و فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست).
-قوانین:
-- به همان زبانی جواب بده که کاربر نوشته (معمولاً فارسی). کوتاه، دقیق و مفید باش.
-- برای اطلاعات تازه یا نامطمئن (اخبار، قیمت‌ها، برنامه مسابقات، وضعیت هوا و...) حتماً از web_search استفاده کن و در صورت نیاز صفحه را با web_fetch بخوان؛ از حافظه حدس نزن.
-- وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
-- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن.
-- اگر ابزاری خطا داد، صادقانه به کاربر بگو."""
     }
 }
