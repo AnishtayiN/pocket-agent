@@ -51,10 +51,9 @@ jobs:
           body: |
             ## Pocket Agent — ایجنت جیبی
 
-            An Android AI agent: a cloud AI model with real tools on your phone.
+            An Android AI agent with a name, a long-term memory and real tools on your phone:
+            live web search & page fetch, image generation, battery & device info, a private
+            file workspace — and it remembers you between conversations.
 
-            **v1.0.0**
-            - Full agent loop (OpenAI-compatible tool calling) with any provider — the default one is free and keyless, changeable in Settings
-            - Tools: live web search & page fetch (Keenable), image generation (Pollinations), battery & device info, date/time, private file workspace
-            - Persian RTL chat UI, chat history saved on device
-            - Note: the APK is signed with a CI-generated keystore, so uninstall before reinstalling a future build
+            - Persian RTL chat UI; the agent's name and memory are managed in Settings
+            - Note: the APK is signed with a CI-generated keystore, so uninstall the previous version before installing this one (app data is stored on-device)
