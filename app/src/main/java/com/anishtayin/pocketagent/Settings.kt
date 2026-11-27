@@ -4,16 +4,18 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /** Internal AI provider config — deliberately NOT shown in the app UI.
- *  Any OpenAI-compatible endpoint works; change here and rebuild.
- *  Primary: keyless free API with reasoning mode. Fallback: Pollinations
- *  (keyless, reasons natively) — used automatically only if the primary
- *  fails before answering, so a dead provider never kills the agent. */
+ *  Primary: Pollinations (keyless) serving a real reasoning model
+ *  (gpt-oss) that thinks natively and streams its reasoning — this is the
+ *  brain. Fallback: APIsFreeLLM (keyless, reasoning mode on), used
+ *  automatically only if the primary fails before answering (e.g. its
+ *  daily anonymous cap), so a dead provider never kills the agent. */
 object AiConfig {
-    const val BASE_URL = "https://api.apisfreellm.com/v1"
-    const val MODEL = "free-ai"
+    const val BASE_URL = "https://text.pollinations.ai/openai"
+    const val MODEL = "openai"
     const val API_KEY = ""
-    const val FALLBACK_BASE_URL = "https://text.pollinations.ai/openai"
-    const val FALLBACK_MODEL = "openai"
+    const val FALLBACK_BASE_URL = "https://api.apisfreellm.com/v1"
+    const val FALLBACK_MODEL = "free-ai"
+    const val FALLBACK_API_KEY = ""
 }
 
 /** User-facing settings: only the agent's identity lives here now. */
