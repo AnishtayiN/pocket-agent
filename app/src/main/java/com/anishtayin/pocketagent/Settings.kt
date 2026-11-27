@@ -37,6 +37,12 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("auto_speak", false)
         set(value) = prefs.edit().putBoolean("auto_speak", value).apply()
 
+    /** Deep-thinking mode: native reasoning + research nudge + answer
+     *  verification. Off = fast mode: the plain API answer, no extra passes. */
+    var thinkingMode: Boolean
+        get() = prefs.getBoolean("thinking_mode", true)
+        set(value) = prefs.edit().putBoolean("thinking_mode", value).apply()
+
     companion object {
         const val DEFAULT_AGENT_NAME = "جیبی"
     }
