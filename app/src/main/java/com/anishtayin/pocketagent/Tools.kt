@@ -8,8 +8,11 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -61,6 +64,8 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 "read_memory" -> ToolOutcome(readMemory())
                 "delete_memory" -> ToolOutcome(deleteMemory(args.getString("text")))
                 "process_file" -> ToolOutcome(processFile(args.getString("name")))
+                "run_python" -> ToolOutcome(runPython(args.getString("code")))
+                "run_python_file" -> ToolOutcome(runPythonFile(args.getString("name")))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -233,6 +238,46 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
         return Processing.fileNote(context, f)
     }
 
+    // ---------- Python execution (Chaquopy, on-device) ----------
+
+    private suspend fun runPythonFile(name: String): String {
+        val f = safeFile(name) ?: return "نام فایل مجاز نیست"
+        if (!f.exists()) return "فایل «$name» وجود ندارد"
+        return runPython(f.readText())
+    }
+
+    private suspend fun runPython(code: String): String {
+        val json = withTimeoutOrNull(25_000) {
+            withContext(Dispatchers.IO) {
+                if (!Python.isStarted()) {
+                    Python.start(AndroidPlatform(context))
+                }
+                val module = Python.getInstance().getModule("runner")
+                module.callAttr("run", code).toString()
+            }
+        } ?: return "اجرا بیش از ۲۵ ثانیه طول کشید و متوقف شد (احتمال حلقه بی‌نهایت یا انتظار برای ورودی). ورودی تعاملی (input) پشتیبانی نمی‌شود."
+        val root = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return "خطای داخلی موتور پایتون"
+        }
+        val ok = root.optBoolean("ok")
+        val out = root.optString("stdout")
+        val err = root.optString("stderr")
+        return buildString {
+            appendLine(if (ok) "✅ اجرا موفق بود." else "❌ اجرا با خطا مواجه شد.")
+            if (out.isNotBlank()) {
+                appendLine("خروجی (stdout):")
+                appendLine(out.take(4000))
+            }
+            if (err.isNotBlank()) {
+                appendLine(if (ok) "هشدارها (stderr):" else "خطا (traceback):")
+                appendLine(err.take(4000))
+            }
+            if (out.isBlank() && err.isBlank()) appendLine("(بدون خروجی)")
+        }.trim()
+    }
+
     // ---------- long-term memory ----------
 
     private fun saveMemory(fact: String): String {
@@ -268,6 +313,8 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
             "read_memory" -> "خواندن حافظه"
             "delete_memory" -> "حذف از حافظه"
             "process_file" -> "پردازش فایل"
+            "run_python" -> "اجرای پایتون"
+            "run_python_file" -> "اجرا و دیباگ پایتون"
             else -> name
         }
 
@@ -314,6 +361,10 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                     JSONObject().put("text", strProp("Fragment that matches the memory entries to remove")), listOf("text")))
                 put(fn("process_file", "Extract and read the content of a file in the workspace: PDF text, plain-text/code files, or a CSV summary. Use it for files the user attached or that you wrote earlier when you need their full content.",
                     JSONObject().put("name", strProp("File name in the workspace")), listOf("name")))
+                put(fn("run_python", "Run a Python 3.11 code snippet on the device and get its stdout/stderr back. No interactive input; 25-second limit. Use it to test and debug code.",
+                    JSONObject().put("code", strProp("Python code to execute")), listOf("code")))
+                put(fn("run_python_file", "Run a Python file from the workspace on the device and get its output or traceback back. This is your debug step after writing a .py file: run it, read the error, fix the file with write_file, run again.",
+                    JSONObject().put("name", strProp("Python file name in the workspace, e.g. script.py")), listOf("name")))
             }
         }
     }
