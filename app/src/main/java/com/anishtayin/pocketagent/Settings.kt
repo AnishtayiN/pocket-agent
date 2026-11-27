@@ -44,6 +44,6 @@ class Settings(context: Context) {
         set(value) = prefs.edit().putBoolean("thinking_mode", value).apply()
 
     companion object {
-        const val DEFAULT_AGENT_NAME = "جیبی"
+        const val DEFAULT_AGENT_NAME = "آورا"
     }
 }
