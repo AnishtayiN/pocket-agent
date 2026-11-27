@@ -42,6 +42,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
     val memoryEntries = mutableStateListOf<String>()
     val themeMode = mutableStateOf(settings.themeMode)
     val autoSpeak = mutableStateOf(settings.autoSpeak)
+    val thinkingMode = mutableStateOf(settings.thinkingMode)
     val isListening = mutableStateOf(false)
 
     /** Live streaming state for the in-flight answer. */
@@ -209,6 +210,36 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         if (!on) voice.stopSpeaking()
     }
 
+    fun setThinkingMode(on: Boolean) {
+        settings.thinkingMode = on
+        thinkingMode.value = on
+    }
+
+    /** Export the conversation as a plain-text file; returns its path. */
+    fun exportChat(): String? {
+        val real = messages.filter { it.role == "user" || it.role == "assistant" }
+        if (real.isEmpty()) return null
+        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(Date())
+        val sb = StringBuilder("گفتگو با ${agentName.value} — ایجنت جیبی\n\n")
+        val timeFmt = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
+        real.forEach { m ->
+            val who = if (m.role == "user") "من" else agentName.value
+            sb.appendLine("[$who — ${timeFmt.format(Date(m.time))}]")
+            if (m.content.isNotBlank()) sb.appendLine(m.content)
+            if (m.imagePath != null) sb.appendLine("(تصویر پیوست/ساخته‌شده)")
+            if (m.filePath != null) sb.appendLine("(فایل تحویل‌شده: ${File(m.filePath).name})")
+            sb.appendLine()
+        }
+        return try {
+            val dir = File(getApplication<Application>().filesDir, "exports").apply { mkdirs() }
+            val f = File(dir, "chat_$stamp.txt")
+            f.writeText(sb.toString())
+            f.absolutePath
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** Speak a finished answer aloud; returns false if no TTS is available. */
     fun speakText(text: String): Boolean {
         if (voice.isSpeaking) {
@@ -282,6 +313,16 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
             "delete_memory" -> args.optString("text").ifBlank { null }
             "get_weather" -> args.optString("city").ifBlank { null }
             "speak", "share_text", "clipboard_write" -> args.optString("text").take(70).ifBlank { null }
+            "create_qr" -> args.optString("text").take(70).ifBlank { null }
+            "wikipedia_summary" -> args.optString("title").ifBlank { null }
+            "get_exchange_rate" -> {
+                val from = args.optString("from")
+                val to = args.optString("to")
+                if (from.isNotBlank() && to.isNotBlank()) "$from → $to" else null
+            }
+            "open_dialer", "compose_sms" -> args.optString("number").ifBlank { null }
+            "compose_email" -> args.optString("to").ifBlank { null }
+            "open_maps" -> args.optString("query").ifBlank { null }
             "set_timer" -> args.optInt("seconds").takeIf { it > 0 }?.let { "$it ثانیه" }
             "set_alarm" -> "%02d:%02d".format(args.optInt("hour"), args.optInt("minute"))
             "add_calendar_event" -> args.optString("title").ifBlank { null }
@@ -307,16 +348,18 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         agentJob = viewModelScope.launch {
             try {
                 val state = TurnState()
+                val thinking = settings.thinkingMode
                 val lastUserText = messages.lastOrNull { it.role == "user" }?.content ?: ""
                 val apiMessages = buildApiMessages()
 
-                var finalAnswer = runLoop(apiMessages, state, lastUserText)
+                var finalAnswer = runLoop(apiMessages, state, lastUserText, thinking)
 
                 // Verification: factual answers (built on web sources) are
                 // reviewed; an incomplete verdict sends the loop back to work
                 // with the gaps as the assignment. Only then is the answer
                 // delivered — thinking that visibly changes the result.
-                if (finalAnswer != null && state.sources.isNotEmpty() && !stopRequested) {
+                // Fast mode skips this entirely: the plain API answer ships.
+                if (thinking && finalAnswer != null && state.sources.isNotEmpty() && !stopRequested) {
                     val gaps = verifyAnswer(finalAnswer, state.sources)
                     if (gaps != null && !stopRequested) {
                         apiMessages.put(JSONObject().apply {
@@ -332,7 +375,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                                     "فقط پاسخ نهایی را بنویس، بدون اشاره به این بازبینی."
                             )
                         })
-                        val improved = runLoop(apiMessages, state, lastUserText)
+                        val improved = runLoop(apiMessages, state, lastUserText, thinking)
                         if (improved != null) finalAnswer = improved
                     }
                 }
@@ -387,30 +430,35 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun runLoop(
         apiMessages: JSONArray,
         state: TurnState,
-        lastUserText: String
+        lastUserText: String,
+        thinking: Boolean
     ): String? {
         var rounds = 0
         while (rounds < 16) {
             rounds++
-            statusText.value = "در حال فکر کردن…"
+            statusText.value = if (thinking) "در حال فکر کردن…" else "در حال پاسخ دادن…"
             streamingText.value = ""
             reasoningText.value = ""
-            val reply = client.chat(apiMessages, ToolExecutor.specs()) { ev ->
+            val reply = client.chat(apiMessages, ToolExecutor.specs(), thinking) { ev ->
                 when (ev) {
                     is StreamEvent.Content -> {
                         streamingText.value += ev.text
                         statusText.value = "در حال نوشتن پاسخ…"
                     }
                     is StreamEvent.Reasoning -> {
-                        reasoningText.value += ev.text
-                        statusText.value = "در حال فکر کردن…"
+                        if (thinking) {
+                            reasoningText.value += ev.text
+                            statusText.value = "در حال فکر کردن…"
+                        }
                     }
                 }
             }
-            if (!reply.reasoning.isNullOrBlank()) {
-                state.reasoning = reply.reasoning
-            } else if (reasoningText.value.isNotBlank()) {
-                state.reasoning = reasoningText.value
+            if (thinking) {
+                if (!reply.reasoning.isNullOrBlank()) {
+                    state.reasoning = reply.reasoning
+                } else if (reasoningText.value.isNotBlank()) {
+                    state.reasoning = reasoningText.value
+                }
             }
             val streamed = streamingText.value
             streamingText.value = ""
@@ -419,7 +467,8 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                     ?: streamed.takeIf { it.isNotBlank() }
                 // Anti-laziness gate: a factual question must not be answered
                 // from thin air. Push the model back to search — once.
-                if (answer != null && !state.nudged && state.sources.isEmpty() &&
+                // (Deep-thinking mode only; fast mode ships the direct answer.)
+                if (thinking && answer != null && !state.nudged && state.sources.isEmpty() &&
                     looksFactualQuestion(lastUserText)
                 ) {
                     state.nudged = true
@@ -665,7 +714,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 آنچه همین حالا در حافظه بلندمدتت هست:
 ${memoryStore.asPromptText()}
 
-ابزارهایت: تحقیق و جستجوی زنده در وب و خواندن کامل صفحات، آب‌وهوای زنده شهرها (get_weather)، اطلاعات باتری و مشخصات گوشی و وضعیت شبکه، ساعت و تاریخ، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، حافظه بلندمدت، و کنترل واقعی گوشی: تایمر و آلارم، رویداد تقویم، چراغ‌قوه، لرزش، کلیپ‌بورد، باز کردن لینک، اشتراک‌گذاری متن و خواندن متن با صدا (speak).
+ابزارهایت: تحقیق و جستجوی زنده در وب و خواندن کامل صفحات، خلاصه ویکی‌پدیا (wikipedia_summary)، آب‌وهوای زنده شهرها (get_weather)، نرخ زنده ارز و تبدیل مبلغ (get_exchange_rate)، ساخت QR کد (create_qr)، اطلاعات باتری و مشخصات گوشی و وضعیت شبکه، ساعت و تاریخ، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، حافظه بلندمدت، و کنترل واقعی گوشی: تایمر و آلارم، رویداد تقویم، چراغ‌قوه، لرزش، کلیپ‌بورد، باز کردن لینک، شماره‌گیر (open_dialer)، پیش‌نویس پیامک (compose_sms) و ایمیل (compose_email)، مسیریابی نقشه (open_maps)، اشتراک‌گذاری متن و خواندن متن با صدا (speak).
 پلن کار: برای هر کار چندمرحله‌ای (۳ قدم یا بیشتر) اول با update_plan یک پلن کوتاه و شفاف به کاربر نشان بده و بعد از انجام هر مرحله وضعیتش را به‌روز کن ([x] انجام‌شده، [~] در حال انجام، [ ] در انتظار). برای کارهای ساده و تک‌مرحله‌ای پلن نساز.
 کدنویسی و تحویل فایل (خیلی مهم): وقتی کاربر از تو کد می‌خواهد (پایتون، HTML یا هر زبان):
 ۱) کد را کامل و تمیز با write_file در فایلی با پسوند درست بنویس (مثلاً script.py یا index.html) — کد نصفه یا نمونه‌وار نده.
@@ -674,10 +723,14 @@ ${memoryStore.asPromptText()}
 پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
 - وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
-- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن؛ برای آب‌وهوا از get_weather (اسم شهر را انگلیسی بده).
+- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن؛ برای آب‌وهوا از get_weather (اسم شهر را انگلیسی بده)؛ برای قیمت ارز و تبدیل پول از get_exchange_rate؛ برای «این چیست/کیست»های دانشنامه‌ای wikipedia_summary منبع خوبی است.
 - برای «یادم بنداز»، «بیدارم کن» و زمان‌بندی از set_alarm یا set_timer استفاده کن؛ برای قرار و جلسه از add_calendar_event.
+- برای «زنگ بزن» شماره‌گیر را با open_dialer باز کن؛ برای پیامک از compose_sms و برای ایمیل از compose_email (این‌ها پیش‌نویس را باز می‌کنند و ارسال نهایی با خود کاربر است — همین را بگو). برای «مسیر/آدرس» از open_maps.
+- وقتی کاربر QR کد خواست با create_qr بساز؛ تصویرش خودکار در چت نشان داده می‌شود.
 - اگر کاربر گفت چیزی را بلند بخوان یا بگو، از speak استفاده کن.
-- اگر ابزاری خطا داد، صادقانه و کوتاه بگو."""
+- اگر ابزاری خطا داد، صادقانه و کوتاه بگو.${
+    if (!settings.thinkingMode) "\n\nحالت فعلی: پاسخ سریع. کاربر حالت فکر عمیق را خاموش کرده: مستقیم و کوتاه جواب بده، فقط وقتی واقعاً لازم است ابزار بزن (مثلاً سؤال درباره گوشی یا درخواست انجام کار)، و برای سؤال‌های عمومی از دانش خودت جواب بده مگر کاربر صراحتاً تحقیق بخواهد." else ""
+}"""
     }
 
     private fun persist() {
