@@ -193,6 +193,7 @@ private data class PocketPalette(
     val hairline: Color,
     val softFill: Color,
     val userBubble: Color,
+    val userBubble2: Color,
     val text: Color,
     val muted: Color,
     val accent1: Color,
@@ -219,6 +220,7 @@ private val LightPalette = PocketPalette(
     hairline = Color(0xFFE4E7F0),
     softFill = Color(0xFFF0F2F8),
     userBubble = Color(0xFFEDE9FE),
+    userBubble2 = Color(0xFFE0F2FE),
     text = Color(0xFF171A26),
     muted = Color(0xFF69708A),
     accent1 = Color(0xFF06B6D4),
@@ -243,6 +245,7 @@ private val DarkPalette = PocketPalette(
     hairline = Color(0xFF1D2740),
     softFill = Color(0xFF121A2E),
     userBubble = Color(0xFF282150),
+    userBubble2 = Color(0xFF1B2A52),
     text = Color(0xFFE7ECF6),
     muted = Color(0xFF93A0B8),
     accent1 = Color(0xFF22D3EE),
@@ -622,9 +625,8 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = p.text
+                        style = MaterialTheme.typography.titleMedium.merge(TextStyle(brush = p.accent)),
+                        fontWeight = FontWeight.ExtraBold
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -636,7 +638,7 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (busy) status.ifBlank { "در حال کار…" } else "آنلاین — ایجنت شخصی تو",
+                            text = if (busy) status.ifBlank { "در حال کار…" } else "آنلاین — دستیار هوشمند تو",
                             style = MaterialTheme.typography.bodySmall,
                             color = p.muted,
                             maxLines = 1,
@@ -666,12 +668,41 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                     )
                 }
             }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(p.hairline)
-            )
+            if (busy) {
+                // aurora sweep: a gradient segment gliding under the header
+                val sweep = rememberInfiniteTransition(label = "sweep")
+                val shift by sweep.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(1400), RepeatMode.Restart),
+                    label = "shift"
+                )
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                ) {
+                    val w = size.width
+                    val seg = w * 0.35f
+                    val x = (w + seg) * shift - seg
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(p.accent1, p.accent2, p.accent3),
+                            startX = x,
+                            endX = x + seg
+                        ),
+                        topLeft = Offset(x, 0f),
+                        size = androidx.compose.ui.geometry.Size(seg, size.height)
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(p.hairline)
+                )
+            }
         }
     }
 }
@@ -709,7 +740,7 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(18.dp))
-        AgentAvatar(size = 96, iconSize = 52)
+        AgentAvatar(size = 104, iconSize = 56)
         Spacer(Modifier.height(22.dp))
         Text(
             text = "سلام! من $name‌ام",
@@ -717,8 +748,26 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
             fontWeight = FontWeight.ExtraBold
         )
         Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(p.chipBg)
+                .border(1.dp, p.chipBorder, RoundedCornerShape(50))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(13.dp), tint = p.accent2)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "دستیار هوشمند شخصی تو",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = p.chipText
+            )
+        }
+        Spacer(Modifier.height(12.dp))
         Text(
-            text = "ایجنت شخصی تو روی این گوشی. فکر می‌کنم، تحقیق می‌کنم، کار را انجام می‌دهم و کامل و با منبع تحویل می‌دهم:",
+            text = "روی این گوشی زندگی می‌کنم: فکر می‌کنم، تحقیق می‌کنم، کار را انجام می‌دهم و کامل و با منبع تحویل می‌دهم:",
             color = p.muted,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -732,7 +781,13 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
                                 .weight(1f)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(p.surface)
-                                .border(1.dp, p.hairline, RoundedCornerShape(16.dp))
+                                .border(
+                                    1.dp,
+                                    Brush.linearGradient(
+                                        listOf(p.accent1.copy(alpha = 0.4f), p.accent3.copy(alpha = 0.4f))
+                                    ),
+                                    RoundedCornerShape(16.dp)
+                                )
                                 .padding(12.dp)
                         ) {
                             Box(
@@ -804,6 +859,23 @@ private fun ThinkingBubble(status: String, reasoning: String) {
             seconds++
         }
     }
+    // three staggered bouncing dots
+    val dots = rememberInfiniteTransition(label = "dots")
+    val d1 by dots.animateFloat(
+        initialValue = 0.25f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(450), RepeatMode.Reverse, androidx.compose.animation.core.StartOffset(0)),
+        label = "d1"
+    )
+    val d2 by dots.animateFloat(
+        initialValue = 0.25f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(450), RepeatMode.Reverse, androidx.compose.animation.core.StartOffset(150)),
+        label = "d2"
+    )
+    val d3 by dots.animateFloat(
+        initialValue = 0.25f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(450), RepeatMode.Reverse, androidx.compose.animation.core.StartOffset(300)),
+        label = "d3"
+    )
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -822,6 +894,21 @@ private fun ThinkingBubble(status: String, reasoning: String) {
                 color = p.accent2,
                 modifier = Modifier.alpha(0.55f + 0.45f * shimmer)
             )
+            Spacer(Modifier.width(10.dp))
+            listOf(d1 to p.accent1, d2 to p.accent2, d3 to p.accent3).forEach { (a, c) ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(6.dp)
+                        .alpha(a)
+                        .graphicsLayer {
+                            scaleX = 0.7f + 0.5f * a
+                            scaleY = 0.7f + 0.5f * a
+                        }
+                        .clip(CircleShape)
+                        .background(c)
+                )
+            }
             if (seconds > 0) {
                 Spacer(Modifier.width(8.dp))
                 Text(
@@ -1015,7 +1102,28 @@ private fun PlanCard(plan: String) {
                 color = p.muted
             )
         }
-        Spacer(Modifier.height(9.dp))
+        Spacer(Modifier.height(8.dp))
+        val progress by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = done.toFloat() / steps.size,
+            animationSpec = tween(500),
+            label = "planProgress"
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(50))
+                .background(p.softFill)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(p.accent)
+            )
+        }
+        Spacer(Modifier.height(7.dp))
         steps.forEach { step ->
             Row(
                 modifier = Modifier.padding(vertical = 3.dp),
@@ -1638,7 +1746,7 @@ private fun MessageRow(
                     modifier = Modifier
                         .widthIn(max = 300.dp)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(p.userBubble)
+                        .background(Brush.linearGradient(listOf(p.userBubble, p.userBubble2)))
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Column {
@@ -1853,8 +1961,14 @@ private fun InputBar(viewModel: AgentViewModel) {
             .clip(RoundedCornerShape(28.dp))
             .background(p.surface)
             .border(
-                width = 1.dp,
-                color = if (listening) p.danger else p.hairline,
+                width = if (listening || busy || input.isNotBlank()) 1.5.dp else 1.dp,
+                brush = when {
+                    listening -> Brush.linearGradient(listOf(p.danger, p.danger))
+                    busy || input.isNotBlank() -> Brush.linearGradient(
+                        listOf(p.accent1, p.accent2, p.accent3)
+                    )
+                    else -> Brush.linearGradient(listOf(p.hairline, p.hairline))
+                },
                 shape = RoundedCornerShape(28.dp)
             )
     ) {
@@ -1903,7 +2017,7 @@ private fun InputBar(viewModel: AgentViewModel) {
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        if (listening) "در حال شنیدن…" else "به ایجنتت یه پیام بده…",
+                        if (listening) "در حال شنیدن…" else "به ${viewModel.agentName.value} یه پیام بده…",
                         color = if (listening) p.danger else p.muted
                     )
                 },
@@ -2254,7 +2368,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
                     Icon(Icons.Filled.TipsAndUpdates, contentDescription = null, tint = p.accent2, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "ایجنت جیبی — نسخه ۸٫۱٫۰",
+                        text = "آورا — نسخه ۹٫۰٫۰",
                         style = MaterialTheme.typography.bodySmall,
                         color = p.muted
                     )
