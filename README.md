@@ -5,7 +5,7 @@ The model thinks; the app acts — search the web, read pages, generate images, 
 
 ## Features (v4.0.0)
 
-- **Writes, runs and debugs real Python on the phone** — ask for code and the agent writes it to a file with the right extension, executes it on-device (Chaquopy, Python 3.11), reads the traceback, fixes the file and re-runs until it works — then **delivers the file in the chat** with open/share actions
+- **Writes, runs and debugs real Python on the phone** — ask for code and the agent writes it to a file with the right extension, executes it on-device (Chaquopy, Python 3), reads the traceback, fixes the file and re-runs until it works — then **delivers the file in the chat** with open/share actions
 - **Light, bright UI** — white surfaces, soft shadows, one cyan→azure accent, animated ambient orbs, rotating-ring avatar, gradient headline, typing indicator, icon suggestion chips, message timestamps, and proper **code-block rendering** (dark card, language label, copy button)
 - **File & image processing on-device** — attach an image or a document right from the chat:
   - Images: OCR (ML Kit, Latin script), dominant colors (Palette), dimensions — the results are fed to the agent, which reacts on its own
