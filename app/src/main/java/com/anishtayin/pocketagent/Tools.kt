@@ -26,7 +26,11 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-data class ToolOutcome(val text: String, val imagePath: String? = null)
+data class ToolOutcome(
+    val text: String,
+    val imagePath: String? = null,
+    val sources: List<String> = emptyList()
+)
 
 /** The agent's hands: device info, web (Keenable, keyless public tier),
  *  image generation (Pollinations, keyless), a private file workspace,
@@ -54,8 +58,9 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 "get_battery_info" -> ToolOutcome(batteryInfo())
                 "get_device_info" -> ToolOutcome(deviceInfo())
                 "get_current_time" -> ToolOutcome(currentTime())
-                "web_search" -> ToolOutcome(webSearch(args.getString("query")))
+                "web_search" -> webSearch(args.getString("query"))
                 "web_fetch" -> ToolOutcome(webFetch(args.getString("url")))
+                "web_research" -> webResearch(args.getString("query"))
                 "generate_image" -> generateImage(args.getString("prompt"))
                 "write_file" -> ToolOutcome(writeFile(args.getString("name"), args.getString("content")))
                 "read_file" -> ToolOutcome(readFile(args.getString("name")))
@@ -128,57 +133,130 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
 
     // ---------- web (Keenable public, keyless) ----------
 
-    private suspend fun webSearch(query: String): String = withContext(Dispatchers.IO) {
-        val body = JSONObject().apply {
-            put("query", query)
-            put("max_results", 5)
-        }.toString()
-        val req = Request.Builder()
-            .url("https://api.keenable.ai/v1/search/public")
-            .header("Content-Type", "application/json")
-            .header("X-Keenable-Title", "PocketAgent")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
-        http.newCall(req).execute().use { resp ->
-            val text = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) return@withContext "جستجو ناموفق بود (HTTP ${resp.code})"
-            val root = JSONObject(text)
-            val results = root.optJSONArray("results") ?: return@withContext "نتیجه‌ای پیدا نشد"
-            if (results.length() == 0) return@withContext "نتیجه‌ای پیدا نشد"
-            val sb = StringBuilder("نتایج جستجو برای «$query»:\n")
-            for (i in 0 until results.length()) {
-                val r = results.getJSONObject(i)
-                sb.appendLine()
-                sb.appendLine("${i + 1}. ${r.optString("title")}")
-                sb.appendLine(r.optString("url"))
-                val snip = r.optString("snippet").ifBlank { r.optString("description") }
-                if (snip.isNotBlank()) sb.appendLine(snip.take(400))
+    private data class SearchHit(
+        val title: String,
+        val url: String,
+        val snippet: String,
+        val date: String
+    )
+
+    private suspend fun searchRaw(query: String, maxResults: Int): List<SearchHit> =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().apply {
+                put("query", query)
+                put("max_results", maxResults)
+            }.toString()
+            val req = Request.Builder()
+                .url("https://api.keenable.ai/v1/search/public")
+                .header("Content-Type", "application/json")
+                .header("X-Keenable-Title", "PocketAgent")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val root = JSONObject(text)
+                val results = root.optJSONArray("results") ?: return@withContext emptyList()
+                val hits = mutableListOf<SearchHit>()
+                for (i in 0 until results.length()) {
+                    val r = results.getJSONObject(i)
+                    val url = r.optString("url")
+                    if (url.isBlank()) continue
+                    val date = sequenceOf("published_at", "publishedAt", "published_date", "date")
+                        .map { r.optString(it) }
+                        .firstOrNull { it.isNotBlank() } ?: ""
+                    hits.add(
+                        SearchHit(
+                            title = r.optString("title"),
+                            url = url,
+                            snippet = r.optString("snippet")
+                                .ifBlank { r.optString("description") },
+                            date = date
+                        )
+                    )
+                }
+                hits
             }
-            sb.toString().take(6000)
         }
+
+    private suspend fun fetchRaw(url: String): Pair<String, String>? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().apply {
+                put("urls", JSONArray().put(url))
+            }.toString()
+            val req = Request.Builder()
+                .url("https://api.keenable.ai/v1/fetch/public")
+                .header("Content-Type", "application/json")
+                .header("X-Keenable-Title", "PocketAgent")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) return@withContext null
+                val root = JSONObject(text)
+                val results = root.optJSONArray("results") ?: return@withContext null
+                if (results.length() == 0) return@withContext null
+                val r = results.getJSONObject(0)
+                Pair(r.optString("title"), r.optString("content"))
+            }
+        }
+
+    private suspend fun webSearch(query: String): ToolOutcome {
+        val hits = searchRaw(query, 8)
+        if (hits.isEmpty()) return ToolOutcome("نتیجه‌ای پیدا نشد یا جستجو ناموفق بود")
+        val sb = StringBuilder("نتایج جستجو برای «$query»:\n")
+        hits.forEachIndexed { i, h ->
+            sb.appendLine()
+            sb.appendLine("${i + 1}. ${h.title}")
+            sb.appendLine(h.url)
+            if (h.date.isNotBlank()) sb.appendLine("تاریخ: ${h.date}")
+            if (h.snippet.isNotBlank()) sb.appendLine(h.snippet.take(600))
+        }
+        return ToolOutcome(
+            text = sb.toString().take(9000),
+            sources = hits.map { it.url }
+        )
     }
 
-    private suspend fun webFetch(url: String): String = withContext(Dispatchers.IO) {
-        val body = JSONObject().apply {
-            put("urls", JSONArray().put(url))
-        }.toString()
-        val req = Request.Builder()
-            .url("https://api.keenable.ai/v1/fetch/public")
-            .header("Content-Type", "application/json")
-            .header("X-Keenable-Title", "PocketAgent")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
-        http.newCall(req).execute().use { resp ->
-            val text = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) return@withContext "خواندن صفحه ناموفق بود (HTTP ${resp.code})"
-            val root = JSONObject(text)
-            val results = root.optJSONArray("results") ?: return@withContext "محتوایی برنگشت"
-            if (results.length() == 0) return@withContext "محتوایی برنگشت"
-            val r = results.getJSONObject(0)
-            val title = r.optString("title")
-            val content = r.optString("content")
-            "عنوان: $title\n\n$content".take(6000)
+    private suspend fun webFetch(url: String): String {
+        val fetched = fetchRaw(url) ?: return "خواندن صفحه ناموفق بود"
+        return "عنوان: ${fetched.first}\n\n${fetched.second}".take(12000)
+    }
+
+    /** Deep research in ONE call: search wide, then actually read the top
+     *  pages and return their combined content with sources — this is what
+     *  makes answers complete instead of snippet-thin. */
+    private suspend fun webResearch(query: String): ToolOutcome {
+        val hits = searchRaw(query, 8)
+        if (hits.isEmpty()) return ToolOutcome("نتیجه‌ای پیدا نشد یا جستجو ناموفق بود")
+        val sb = StringBuilder("تحقیق وب برای «$query»\n")
+        sb.appendLine("\n— نتایج جستجو —")
+        hits.forEachIndexed { i, h ->
+            sb.appendLine("${i + 1}. ${h.title} — ${h.url}")
+            if (h.snippet.isNotBlank()) sb.appendLine("   ${h.snippet.take(300)}")
         }
+        val top = hits.take(3)
+        sb.appendLine("\n— متن کامل منابع برتر —")
+        for ((i, h) in top.withIndex()) {
+            val fetched = try {
+                fetchRaw(h.url)
+            } catch (e: Exception) {
+                null
+            }
+            sb.appendLine()
+            sb.appendLine("=== منبع ${i + 1}: ${h.title} (${h.url}) ===")
+            if (fetched != null && fetched.second.isNotBlank()) {
+                sb.appendLine(fetched.second.take(4500))
+            } else {
+                sb.appendLine("(خواندن کامل صفحه ممکن نشد؛ خلاصه جستجو: ${h.snippet.take(600)})")
+            }
+        }
+        sb.appendLine()
+        sb.appendLine("دستور: بر اساس همین منابع یک جواب کامل و ساخت‌یافته بنویس و در پایان، منابع را با همین لینک‌ها ذکر کن.")
+        return ToolOutcome(
+            text = sb.toString().take(17000),
+            sources = hits.map { it.url }
+        )
     }
 
     // ---------- image (Pollinations, keyless) ----------
@@ -305,6 +383,7 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
             "get_current_time" -> "ساعت و تاریخ"
             "web_search" -> "جستجو در وب"
             "web_fetch" -> "خواندن صفحه وب"
+            "web_research" -> "تحقیق عمیق در وب"
             "generate_image" -> "ساخت عکس"
             "write_file" -> "نوشتن فایل"
             "read_file" -> "خواندن فایل"
@@ -342,10 +421,12 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 put(fn("get_battery_info", "Get the phone's current battery level, charging status, temperature, voltage and health.", none, emptyList()))
                 put(fn("get_device_info", "Get phone model, manufacturer, Android version, RAM and storage.", none, emptyList()))
                 put(fn("get_current_time", "Get the current date and time.", none, emptyList()))
-                put(fn("web_search", "Search the live web. Returns titles, links and snippets. Use for fresh facts, news and anything you are unsure about.",
+                put(fn("web_search", "Search the live web. Returns titles, links, dates and snippets. This is your DEFAULT for any factual question — search first, then answer from the results, not from memory.",
                     JSONObject().put("query", strProp("Search query")), listOf("query")))
-                put(fn("web_fetch", "Fetch and read the text content of a web page URL.",
+                put(fn("web_fetch", "Fetch and read the full text content of a web page URL. Use it on the most relevant search result when snippets are not enough.",
                     JSONObject().put("url", strProp("Full URL, including https://")), listOf("url")))
+                put(fn("web_research", "Deep web research in one call: searches wide AND reads the full text of the top pages, returning combined content with sources. Use for important, complex or multi-part factual questions where a complete answer matters.",
+                    JSONObject().put("query", strProp("Research topic / question")), listOf("query")))
                 put(fn("generate_image", "Generate an image from a text prompt and show it to the user. Write the prompt in English for best results.",
                     JSONObject().put("prompt", strProp("Detailed image description in English")), listOf("prompt")))
                 put(fn("write_file", "Write a text file into the app's private workspace (for code, notes, drafts).",
