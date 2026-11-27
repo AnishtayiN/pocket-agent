@@ -1,6 +1,8 @@
 package com.anishtayin.pocketagent
 
 import android.app.Application
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
@@ -25,6 +27,8 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
     val messages = mutableStateListOf<ChatMsg>()
     val isBusy = mutableStateOf(false)
     val statusText = mutableStateOf("")
+    val isProcessing = mutableStateOf(false)
+    val processingText = mutableStateOf("")
     val agentName = mutableStateOf(settings.agentName)
     val memoryEntries = mutableStateListOf<String>()
 
@@ -43,6 +47,102 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         messages.add(ChatMsg(role = "user", content = trimmed))
         persist()
         runAgent()
+    }
+
+    /** User picked an image: copy it in, process it on-device (OCR, colors,
+     *  dimensions), show it in the chat and let the agent react to it. */
+    fun attachImage(uri: Uri) {
+        if (isBusy.value || isProcessing.value) return
+        val app = getApplication<Application>()
+        isProcessing.value = true
+        processingText.value = "در حال پردازش عکس…"
+        viewModelScope.launch {
+            try {
+                val dir = File(app.filesDir, "attachments").apply { mkdirs() }
+                val ext = when (app.contentResolver.getType(uri)) {
+                    "image/png" -> "png"
+                    "image/webp" -> "webp"
+                    else -> "jpg"
+                }
+                val dest = File(dir, "attach_${System.currentTimeMillis()}.$ext")
+                if (copyUriToFile(uri, dest)) {
+                    val note = Processing.imageNote(app, dest)
+                    messages.add(
+                        ChatMsg(
+                            role = "user",
+                            content = "",
+                            imagePath = dest.absolutePath,
+                            attachmentNote = note
+                        )
+                    )
+                    persist()
+                    runAgent()
+                } else {
+                    messages.add(ChatMsg(role = "assistant", content = "⚠️ عکس خوانده نشد. دوباره تلاش کن."))
+                }
+            } finally {
+                isProcessing.value = false
+                processingText.value = ""
+            }
+        }
+    }
+
+    /** User picked a document: copy it into the workspace, extract its text
+     *  on-device (PDF / text / CSV) and let the agent work with it. */
+    fun attachDocument(uri: Uri) {
+        if (isBusy.value || isProcessing.value) return
+        val app = getApplication<Application>()
+        isProcessing.value = true
+        processingText.value = "در حال پردازش فایل…"
+        viewModelScope.launch {
+            try {
+                val rawName = displayName(uri) ?: "file_${System.currentTimeMillis()}"
+                val safeName = rawName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val dir = File(app.filesDir, "workspace").apply { mkdirs() }
+                val dest = File(dir, safeName)
+                if (copyUriToFile(uri, dest)) {
+                    val note = Processing.fileNote(app, dest)
+                    messages.add(
+                        ChatMsg(
+                            role = "user",
+                            content = "📄 فایل پیوست شد: $safeName",
+                            attachmentNote = note
+                        )
+                    )
+                    persist()
+                    runAgent()
+                } else {
+                    messages.add(ChatMsg(role = "assistant", content = "⚠️ فایل خوانده نشد. دوباره تلاش کن."))
+                }
+            } finally {
+                isProcessing.value = false
+                processingText.value = ""
+            }
+        }
+    }
+
+    private fun copyUriToFile(uri: Uri, dest: File): Boolean {
+        return try {
+            val cr = getApplication<Application>().contentResolver
+            cr.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            }
+            dest.exists() && dest.length() > 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun displayName(uri: Uri): String? {
+        return try {
+            val cr = getApplication<Application>().contentResolver
+            cr.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun clearChat() {
@@ -161,7 +261,18 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         for (m in messages) {
             when (m.role) {
                 "user" -> arr.put(JSONObject().apply {
-                    put("role", "user"); put("content", m.content)
+                    put("role", "user")
+                    val sb = StringBuilder()
+                    if (m.imagePath != null && m.content.isBlank()) {
+                        sb.append("(کاربر یک تصویر پیوست کرده است)")
+                    } else {
+                        sb.append(m.content)
+                    }
+                    if (m.attachmentNote != null) {
+                        sb.append("\n\n[داده پیوست — نتیجه پردازش روی گوشی]\n")
+                        sb.append(m.attachmentNote)
+                    }
+                    put("content", sb.toString())
                 })
                 "assistant" -> arr.put(JSONObject().apply {
                     put("role", "assistant")
@@ -182,7 +293,8 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 آنچه همین حالا در حافظه بلندمدتت هست:
 ${memoryStore.asPromptText()}
 
-ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست) و حافظه بلندمدت.
+ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش) و حافظه بلندمدت.
+پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
 - برای اطلاعات تازه یا نامطمئن (اخبار، قیمت‌ها، برنامه مسابقات، هوا و...) حتماً از web_search استفاده کن و در صورت نیاز صفحه را با web_fetch بخوان؛ از حافظه حدس نزن.
 - وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
