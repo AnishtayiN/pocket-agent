@@ -1,11 +1,17 @@
 package com.anishtayin.pocketagent
 
 import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,13 +42,22 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Newspaper
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,36 +82,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val PocketColors = darkColorScheme(
     primary = Color(0xFF22D3EE),
     onPrimary = Color(0xFFFFFFFF),
-    background = Color(0xFF050A1E),
+    background = Color(0xFF04081A),
     onBackground = Color(0xFFF1F5F9),
-    surface = Color(0xFF0C142E),
+    surface = Color(0xFF0B132B),
     onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = Color(0xFF16223F),
-    onSurfaceVariant = Color(0xFFC7D2E4),
-    outlineVariant = Color(0xFF2A3B5F)
+    surfaceVariant = Color(0xFF14213F),
+    onSurfaceVariant = Color(0xFFB9C6DC),
+    outlineVariant = Color(0xFF26365C)
 )
 
-private val AvatarBrush = Brush.linearGradient(
-    listOf(Color(0xFF22D3EE), Color(0xFF818CF8), Color(0xFFE879F9))
+/** One accent family only: cyan -> azure. (Design rule: single accent, calibrated.) */
+private val AccentBrush = Brush.linearGradient(
+    listOf(Color(0xFF22D3EE), Color(0xFF0EA5C6), Color(0xFF2563EB))
 )
 private val UserBrush = Brush.horizontalGradient(
-    listOf(Color(0xFF0EA5C6), Color(0xFF6366F1))
-)
-private val ScreenBrush = Brush.verticalGradient(
-    listOf(Color(0xFF0A1230), Color(0xFF050A1E))
+    listOf(Color(0xFF0891B2), Color(0xFF2563EB))
 )
 
 @Composable
@@ -103,11 +125,8 @@ fun AgentApp(viewModel: AgentViewModel) {
     MaterialTheme(colorScheme = PocketColors) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             var showSettings by remember { mutableStateOf(false) }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(ScreenBrush)
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AmbientBackground()
                 if (showSettings) {
                     SettingsScreen(viewModel = viewModel, onBack = { showSettings = false })
                 } else {
@@ -118,22 +137,86 @@ fun AgentApp(viewModel: AgentViewModel) {
     }
 }
 
+/** Slow-drifting ambient light orbs behind everything — depth without noise. */
 @Composable
-private fun AgentAvatar(size: Int, iconSize: Int) {
+private fun AmbientBackground() {
+    val transition = rememberInfiniteTransition(label = "ambient")
+    val drift by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(14000), RepeatMode.Reverse),
+        label = "drift"
+    )
     Box(
         modifier = Modifier
-            .size(size.dp)
-            .shadow(10.dp, CircleShape)
-            .clip(CircleShape)
-            .background(AvatarBrush),
-        contentAlignment = Alignment.Center
+            .fillMaxSize()
+            .background(Color(0xFF04081A))
     ) {
-        Icon(
-            Icons.Filled.AutoAwesome,
-            contentDescription = null,
-            modifier = Modifier.size(iconSize.dp),
-            tint = Color.White
+        Box(
+            modifier = Modifier
+                .size(340.dp)
+                .offset(x = (-70 + drift * 46).dp, y = (-110).dp)
+                .background(
+                    Brush.radialGradient(
+                        listOf(Color(0x3322D3EE), Color.Transparent)
+                    )
+                )
         )
+        Box(
+            modifier = Modifier
+                .size(380.dp)
+                .align(Alignment.BottomEnd)
+                .offset(x = (120 - drift * 52).dp, y = (130).dp)
+                .background(
+                    Brush.radialGradient(
+                        listOf(Color(0x2E2563EB), Color.Transparent)
+                    )
+                )
+        )
+    }
+}
+
+/** Avatar with a slowly rotating sweep-gradient ring. */
+@Composable
+private fun AgentAvatar(size: Int, iconSize: Int) {
+    val transition = rememberInfiniteTransition(label = "ring")
+    val angle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(9000), RepeatMode.Restart),
+        label = "angle"
+    )
+    Box(modifier = Modifier.size(size.dp), contentAlignment = Alignment.Center) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { rotationZ = angle }
+        ) {
+            drawArc(
+                brush = Brush.sweepGradient(
+                    listOf(Color.Transparent, Color(0xFF22D3EE), Color.Transparent)
+                ),
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size((size - 7).dp)
+                .shadow(12.dp, CircleShape)
+                .clip(CircleShape)
+                .background(AccentBrush),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                modifier = Modifier.size(iconSize.dp),
+                tint = Color.White
+            )
+        }
     }
 }
 
@@ -141,9 +224,10 @@ private fun AgentAvatar(size: Int, iconSize: Int) {
 private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
     val messages = viewModel.messages
     val busy by viewModel.isBusy
+    val processing by viewModel.isProcessing
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size, busy) {
+    LaunchedEffect(messages.size, busy, processing) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -158,7 +242,7 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (messages.isEmpty()) {
+            if (messages.isEmpty() && !processing) {
                 EmptyState(
                     viewModel = viewModel,
                     modifier = Modifier
@@ -175,11 +259,31 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
                     items(messages) { msg ->
-                        Box(modifier = Modifier.animateItem()) { MessageRow(msg) }
+                        Box(
+                            modifier = Modifier.animateItem(
+                                placementSpec = spring(stiffness = Spring.StiffnessLow)
+                            )
+                        ) { MessageRow(msg) }
                     }
                     if (busy) {
                         item { TypingBubble(viewModel.statusText.value) }
                     }
+                }
+            }
+            if (processing) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        text = viewModel.processingText.value.ifBlank { "در حال پردازش…" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             InputBar(viewModel = viewModel)
@@ -199,14 +303,14 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
         animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
         label = "dot"
     )
-    Surface(color = Color(0xCC0C142E), tonalElevation = 4.dp) {
+    Surface(color = Color(0xB30B132B), tonalElevation = 6.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AgentAvatar(size = 44, iconSize = 24)
+            AgentAvatar(size = 46, iconSize = 24)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -240,50 +344,62 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
     }
 }
 
+private data class Suggestion(val text: String, val icon: ImageVector)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier) {
     val name by viewModel.agentName
     val suggestions = listOf(
-        "شارژ گوشیم چنده؟",
-        "یه عکس از غروب کرمانشاه بساز",
-        "اخبار امروز چیه؟",
-        "ساعت و تاریخ امروز رو بگو",
-        "چه کارهایی می‌تونی برام بکنی؟"
+        Suggestion("شارژ گوشیم چنده؟", Icons.Filled.BatteryFull),
+        Suggestion("یه عکس از غروب کرمانشاه بساز", Icons.Filled.Image),
+        Suggestion("اخبار امروز چیه؟", Icons.Filled.Newspaper),
+        Suggestion("ساعت و تاریخ امروز رو بگو", Icons.Filled.Schedule),
+        Suggestion("چه کارهایی می‌تونی برام بکنی؟", Icons.Filled.AutoAwesome)
     )
     Column(
         modifier = modifier.padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        AgentAvatar(size = 96, iconSize = 52)
-        Spacer(Modifier.height(20.dp))
+        AgentAvatar(size = 104, iconSize = 56)
+        Spacer(Modifier.height(22.dp))
         Text(
             text = "سلام! من $name‌ام",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
+            style = MaterialTheme.typography.headlineMedium.merge(
+                TextStyle(brush = AccentBrush)
+            ),
+            fontWeight = FontWeight.ExtraBold
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
-            text = "ایجنت شخصی تو روی این گوشی‌ام. حافظه دارم و یادم می‌مونه، سرچ می‌کنم، عکس می‌سازم و به گوشی دسترسی دارم. یه کار بهم بده:",
+            text = "ایجنت شخصی تو روی این گوشی‌ام. حافظه دارم و یادم می‌مونه، سرچ می‌کنم، عکس می‌سازم، فایل و عکس رو پردازش می‌کنم و به گوشی دسترسی دارم. یه کار بهم بده:",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(24.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
             suggestions.forEach { s ->
-                Box(
+                Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .background(Color(0xCC14213F))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50))
-                        .clickable { viewModel.send(s) }
-                        .padding(horizontal = 14.dp, vertical = 9.dp)
+                        .clickable { viewModel.send(s.text) }
+                        .padding(horizontal = 13.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = s, style = MaterialTheme.typography.bodySmall)
+                    Icon(
+                        s.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text(text = s.text, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -299,9 +415,9 @@ private fun TypingBubble(status: String) {
     ) {
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(18.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xE60B132B))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -337,6 +453,24 @@ private fun TypingBubble(status: String) {
     }
 }
 
+private fun timeLabel(ms: Long): String =
+    if (ms > 0) SimpleDateFormat("HH:mm", Locale.US).format(Date(ms)) else ""
+
+@Composable
+private fun AttachedImage(path: String) {
+    val bitmap = remember(path) { BitmapFactory.decodeFile(path) }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "تصویر پیوست",
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp)),
+            contentScale = ContentScale.FillWidth
+        )
+    }
+}
+
 @Composable
 private fun MessageRow(msg: ChatMsg) {
     when (msg.role) {
@@ -345,8 +479,8 @@ private fun MessageRow(msg: ChatMsg) {
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0x3314B8D4))
-                        .border(1.dp, Color(0x5522D3EE), RoundedCornerShape(50))
+                        .background(Color(0x2614B8D4))
+                        .border(1.dp, Color(0x4022D3EE), RoundedCornerShape(50))
                         .padding(horizontal = 12.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -373,12 +507,31 @@ private fun MessageRow(msg: ChatMsg) {
                 Box(
                     modifier = Modifier
                         .widthIn(max = 300.dp)
-                        .shadow(4.dp, RoundedCornerShape(20.dp))
+                        .shadow(6.dp, RoundedCornerShape(20.dp))
                         .clip(RoundedCornerShape(20.dp))
                         .background(UserBrush)
-                        .padding(horizontal = 15.dp, vertical = 11.dp)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    Text(text = msg.content, color = Color.White)
+                    Column {
+                        val path = msg.imagePath
+                        if (path != null) {
+                            AttachedImage(path)
+                            if (msg.content.isNotBlank()) Spacer(Modifier.height(8.dp))
+                        }
+                        if (msg.content.isNotBlank()) {
+                            Text(text = msg.content, color = Color.White)
+                        }
+                        val t = timeLabel(msg.time)
+                        if (t.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = t,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xB3FFFFFF),
+                                modifier = Modifier.align(Alignment.End)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -391,9 +544,9 @@ private fun MessageRow(msg: ChatMsg) {
                     modifier = Modifier
                         .widthIn(max = 324.dp)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surface)
+                        .background(Color(0xE60B132B))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
-                        .padding(horizontal = 15.dp, vertical = 11.dp)
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Column {
                         if (msg.content.isNotBlank()) {
@@ -401,18 +554,18 @@ private fun MessageRow(msg: ChatMsg) {
                         }
                         val path = msg.imagePath
                         if (path != null) {
-                            val bitmap = remember(path) { BitmapFactory.decodeFile(path) }
-                            if (bitmap != null) {
-                                if (msg.content.isNotBlank()) Spacer(Modifier.height(9.dp))
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "عکس ساخته‌شده",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp)),
-                                    contentScale = ContentScale.FillWidth
-                                )
-                            }
+                            if (msg.content.isNotBlank()) Spacer(Modifier.height(9.dp))
+                            AttachedImage(path)
+                        }
+                        val t = timeLabel(msg.time)
+                        if (t.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = t,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.End)
+                            )
                         }
                     }
                 }
@@ -424,10 +577,20 @@ private fun MessageRow(msg: ChatMsg) {
 @Composable
 private fun InputBar(viewModel: AgentViewModel) {
     val busy by viewModel.isBusy
+    val processing by viewModel.isProcessing
     var input by remember { mutableStateOf("") }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) viewModel.attachImage(uri) }
+
+    val docPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) viewModel.attachDocument(uri) }
 
     fun submit() {
-        if (input.isNotBlank() && !busy) {
+        if (input.isNotBlank() && !busy && !processing) {
             viewModel.send(input)
             input = ""
         }
@@ -439,12 +602,46 @@ private fun InputBar(viewModel: AgentViewModel) {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Bottom
     ) {
+        Box {
+            IconButton(
+                onClick = { menuOpen = true },
+                enabled = !busy && !processing,
+                modifier = Modifier
+                    .size(50.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            ) {
+                Icon(Icons.Filled.AttachFile, contentDescription = "پیوست")
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("پیوست عکس") },
+                    leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("پیوست فایل (PDF، متن، CSV…)") },
+                    leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        docPicker.launch(arrayOf("*/*"))
+                    }
+                )
+            }
+        }
+        Spacer(Modifier.width(9.dp))
         Box(
             modifier = Modifier
                 .weight(1f)
                 .shadow(6.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
-                .background(MaterialTheme.colorScheme.surface)
+                .background(Color(0xE60B132B))
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(28.dp))
         ) {
             TextField(
@@ -465,16 +662,19 @@ private fun InputBar(viewModel: AgentViewModel) {
                 keyboardActions = KeyboardActions(onSend = { submit() })
             )
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(9.dp))
         Box(
             modifier = Modifier
                 .size(50.dp)
                 .shadow(8.dp, CircleShape)
                 .clip(CircleShape)
-                .background(if (input.isNotBlank() && !busy) AvatarBrush else Brush.linearGradient(listOf(Color(0xFF334155), Color(0xFF334155)))),
+                .background(
+                    if (input.isNotBlank() && !busy) AccentBrush
+                    else Brush.linearGradient(listOf(Color(0xFF26365C), Color(0xFF26365C)))
+                ),
             contentAlignment = Alignment.Center
         ) {
-            IconButton(onClick = { submit() }, enabled = input.isNotBlank() && !busy) {
+            IconButton(onClick = { submit() }, enabled = input.isNotBlank() && !busy && !processing) {
                 Icon(
                     Icons.AutoMirrored.Filled.Send,
                     contentDescription = "ارسال",
@@ -494,7 +694,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            Surface(color = Color(0xCC0C142E), tonalElevation = 4.dp) {
+            Surface(color = Color(0xB30B132B), tonalElevation = 6.dp) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -522,7 +722,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AgentAvatar(size = 56, iconSize = 30)
+                    AgentAvatar(size = 58, iconSize = 30)
                     Spacer(Modifier.width(14.dp))
                     Text(
                         text = "هویت ایجنت",
@@ -575,7 +775,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surface)
+                            .background(Color(0xE60B132B))
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
                             .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -604,7 +804,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
             item {
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "ایجنت جیبی — نسخه ۲٫۰٫۰",
+                    text = "ایجنت جیبی — نسخه ۳٫۰٫۰",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
