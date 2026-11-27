@@ -252,7 +252,7 @@ class ToolExecutor(
             val req = Request.Builder()
                 .url("https://api.keenable.ai/v1/search/public")
                 .header("Content-Type", "application/json")
-                .header("X-Keenable-Title", "PocketAgent")
+                .header("X-Keenable-Title", "Aura")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(req).execute().use { resp ->
@@ -290,7 +290,7 @@ class ToolExecutor(
             val req = Request.Builder()
                 .url("https://api.keenable.ai/v1/fetch/public")
                 .header("Content-Type", "application/json")
-                .header("X-Keenable-Title", "PocketAgent")
+                .header("X-Keenable-Title", "Aura")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(req).execute().use { resp ->
@@ -633,7 +633,7 @@ class ToolExecutor(
     private suspend fun clipboardWrite(text: String): ToolOutcome = withContext(Dispatchers.Main) {
         try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Pocket Agent", text))
+            cm.setPrimaryClip(ClipData.newPlainText("Aura", text))
             ToolOutcome("متن در کلیپ‌بورد کپی شد")
         } catch (e: Exception) {
             ToolOutcome("کپی در کلیپ‌بورد ممکن نشد")
@@ -720,7 +720,7 @@ class ToolExecutor(
             val l = lang.trim().lowercase(Locale.US).ifBlank { "fa" }
             val encoded = URLEncoder.encode(title.trim().replace(' ', '_'), "UTF-8").replace("+", "%20")
             val url = "https://$l.wikipedia.org/api/rest_v1/page/summary/$encoded"
-            val req = Request.Builder().url(url).header("User-Agent", "PocketAgent/8.0").build()
+            val req = Request.Builder().url(url).header("User-Agent", "Aura/9.0").build()
             http.newCall(req).execute().use { resp ->
                 val text = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
