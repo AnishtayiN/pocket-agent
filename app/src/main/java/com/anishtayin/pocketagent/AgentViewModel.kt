@@ -180,6 +180,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                 val apiMessages = buildApiMessages()
                 var finished = false
                 var rounds = 0
+                var lastWrittenFile: String? = null
                 while (!finished && rounds < 8) {
                     rounds++
                     statusText.value = "در حال فکر کردن…"
@@ -187,7 +188,13 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                     if (reply.toolCalls.isEmpty()) {
                         val answer = reply.content?.takeIf { it.isNotBlank() }
                             ?: "پاسخی برنگشت. دوباره تلاش کن."
-                        messages.add(ChatMsg(role = "assistant", content = answer))
+                        messages.add(
+                            ChatMsg(
+                                role = "assistant",
+                                content = answer,
+                                filePath = lastWrittenFile
+                            )
+                        )
                         finished = true
                     } else {
                         val assistantMsg = JSONObject().apply {
@@ -216,6 +223,17 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                             messages.add(ChatMsg(role = "tool-ui", content = "", toolLabel = label))
                             persist()
                             val outcome = tools.execute(tc.name, tc.arguments)
+                            if (tc.name == "write_file") {
+                                val fname = try {
+                                    JSONObject(tc.arguments).optString("name")
+                                } catch (e: Exception) {
+                                    ""
+                                }
+                                if (fname.isNotBlank()) {
+                                    val f = File(getApplication<Application>().filesDir, "workspace/$fname")
+                                    if (f.exists()) lastWrittenFile = f.absolutePath
+                                }
+                            }
                             apiMessages.put(JSONObject().apply {
                                 put("role", "tool")
                                 put("tool_call_id", tc.id)
@@ -293,7 +311,11 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 آنچه همین حالا در حافظه بلندمدتت هست:
 ${memoryStore.asPromptText()}
 
-ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش) و حافظه بلندمدت.
+ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، و حافظه بلندمدت.
+کدنویسی و تحویل فایل (خیلی مهم): وقتی کاربر از تو کد می‌خواهد (پایتون، HTML یا هر زبان):
+۱) کد را کامل و تمیز با write_file در فایلی با پسوند درست بنویس (مثلاً script.py یا index.html) — کد نصفه یا نمونه‌وار نده.
+۲) اگر پایتون است، حتماً با run_python_file اجرایش کن. اگر خطا داد، traceback را بخوان، فایل را با write_file اصلاح کن و دوباره اجرا کن؛ این چرخه را تا اجرای موفق ادامه بده. اگر بعد از چند تلاش درست نشد، صادقانه بگو کجا گیر کرده.
+۳) در پیام پایانی خیلی کوتاه بگو چه ساخته شد، اسم فایل چیست و (برای پایتون) نتیجه اجرا چه بود. فایل به‌صورت خودکار همراه همان پیام به کاربر تحویل داده می‌شود، پس لازم نیست کل کد را در متن پیام تکرار کنی؛ مگر کاربر خودش بخواهد.
 پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
 - برای اطلاعات تازه یا نامطمئن (اخبار، قیمت‌ها، برنامه مسابقات، هوا و...) حتماً از web_search استفاده کن و در صورت نیاز صفحه را با web_fetch بخوان؛ از حافظه حدس نزن.
