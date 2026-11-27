@@ -109,6 +109,22 @@ class ToolExecutor(
                 "clipboard_read" -> clipboardRead()
                 "clipboard_write" -> clipboardWrite(args.getString("text"))
                 "update_plan" -> ToolOutcome(updatePlan(args.getString("plan")))
+                "create_qr" -> createQr(args.getString("text"))
+                "get_exchange_rate" -> getExchangeRate(
+                    args.optDouble("amount", 1.0),
+                    args.getString("from"),
+                    args.getString("to")
+                )
+                "wikipedia_summary" -> wikipediaSummary(
+                    args.getString("title"),
+                    args.optString("lang", "fa")
+                )
+                "open_dialer" -> ToolOutcome(openDialer(args.getString("number")))
+                "compose_sms" -> ToolOutcome(composeSms(args.getString("number"), args.optString("text")))
+                "compose_email" -> ToolOutcome(
+                    composeEmail(args.getString("to"), args.optString("subject"), args.optString("body"))
+                )
+                "open_maps" -> ToolOutcome(openMaps(args.getString("query")))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -585,6 +601,135 @@ class ToolExecutor(
         return "پلن ${steps.size} مرحله‌ای به کاربر نشان داده شد. بعد از هر مرحله، وضعیت را با update_plan به‌روز کن."
     }
 
+    // ---------- QR (goqr.me, keyless) ----------
+
+    private suspend fun createQr(text: String): ToolOutcome = withContext(Dispatchers.IO) {
+        val encoded = URLEncoder.encode(text, "UTF-8").replace("+", "%20")
+        val url = "https://api.qrserver.com/v1/create-qr-code/?size=512x512&margin=16&data=$encoded"
+        val req = Request.Builder().url(url).build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                return@withContext ToolOutcome("ساخت QR کد ناموفق بود (HTTP ${resp.code})")
+            }
+            val bytes = resp.body?.bytes() ?: return@withContext ToolOutcome("تصویر QR خالی برگشت")
+            val dir = File(context.filesDir, "images").apply { mkdirs() }
+            val file = File(dir, "qr_${System.currentTimeMillis()}.png")
+            file.writeBytes(bytes)
+            ToolOutcome(
+                text = "QR کد ساخته و به کاربر نشان داده شد. (محتوا: ${text.take(120)})",
+                imagePath = file.absolutePath
+            )
+        }
+    }
+
+    // ---------- currency (open.er-api.com, keyless) ----------
+
+    private suspend fun getExchangeRate(amount: Double, from: String, to: String): ToolOutcome =
+        withContext(Dispatchers.IO) {
+            val base = from.trim().uppercase(Locale.US)
+            val target = to.trim().uppercase(Locale.US)
+            val req = Request.Builder()
+                .url("https://open.er-api.com/v6/latest/$base")
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) {
+                    return@withContext ToolOutcome("گرفتن نرخ ارز ناموفق بود (HTTP ${resp.code})")
+                }
+                val root = try {
+                    JSONObject(text)
+                } catch (e: Exception) {
+                    return@withContext ToolOutcome("پاسخ نرخ ارز قابل خواندن نبود")
+                }
+                if (root.optString("result") != "success") {
+                    return@withContext ToolOutcome("ارز «$base» شناخته نشد (کد سه‌حرفی مثل USD, EUR, IRR بده)")
+                }
+                val rates = root.optJSONObject("rates")
+                    ?: return@withContext ToolOutcome("نرخ‌ها در دسترس نیست")
+                if (!rates.has(target)) {
+                    return@withContext ToolOutcome("ارز «$target» در فهرست نرخ‌ها نیست")
+                }
+                val rate = rates.getDouble(target)
+                val converted = amount * rate
+                val updated = root.optString("time_last_update_utc")
+                ToolOutcome(
+                    buildString {
+                        appendLine("نرخ زنده: هر 1 $base = ${"%.6f".format(rate)} $target")
+                        appendLine("تبدیل: ${"%.2f".format(amount)} $base = ${"%.2f".format(converted)} $target")
+                        if (updated.isNotBlank()) appendLine("به‌روزرسانی: $updated")
+                        append("نکته: این نرخ بازار رسمی/میانی است؛ نرخ تومان بازار آزاد ایران (IRT) با IRR رسمی فرق دارد. اگر کاربر تومان خواست، شفاف بگو کدام نرخ را داری.")
+                    },
+                    sources = listOf("https://open.er-api.com/v6/latest/$base")
+                )
+            }
+        }
+
+    // ---------- Wikipedia (keyless REST API) ----------
+
+    private suspend fun wikipediaSummary(title: String, lang: String): ToolOutcome =
+        withContext(Dispatchers.IO) {
+            val l = lang.trim().lowercase(Locale.US).ifBlank { "fa" }
+            val encoded = URLEncoder.encode(title.trim().replace(' ', '_'), "UTF-8").replace("+", "%20")
+            val url = "https://$l.wikipedia.org/api/rest_v1/page/summary/$encoded"
+            val req = Request.Builder().url(url).header("User-Agent", "PocketAgent/8.0").build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) {
+                    return@withContext ToolOutcome("صفحه «$title» در ویکی‌پدیای $l پیدا نشد (HTTP ${resp.code})؛ عنوان دقیق‌تر یا زبان دیگر (lang=en) را امتحان کن")
+                }
+                val root = try {
+                    JSONObject(text)
+                } catch (e: Exception) {
+                    return@withContext ToolOutcome("پاسخ ویکی‌پدیا قابل خواندن نبود")
+                }
+                val extract = root.optString("extract")
+                if (extract.isBlank()) {
+                    return@withContext ToolOutcome("خلاصه‌ای برای «$title» پیدا نشد")
+                }
+                val pageUrl = root.optJSONObject("content_urls")
+                    ?.optJSONObject("desktop")?.optJSONObject("page")?.optString("uri") ?: url
+                ToolOutcome(
+                    "ویکی‌پدیا ($l) — ${root.optString("title")}\n${root.optString("description").let { if (it.isNotBlank()) "$it\n" else "" }}\n$extract",
+                    sources = listOf(pageUrl)
+                )
+            }
+        }
+
+    // ---------- phone / messages / navigation ----------
+
+    private fun openDialer(number: String): String {
+        val clean = number.filter { it.isDigit() || it == '+' || it == '#' || it == '*' }
+        if (clean.isBlank()) return "شماره معتبر نیست"
+        return if (launchIntent(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$clean")))) "شماره‌گیر با شماره $clean باز شد (تماس با خود کاربر است)"
+        else "برنامه تلفن در دسترس نیست"
+    }
+
+    private fun composeSms(number: String, text: String): String {
+        val clean = number.filter { it.isDigit() || it == '+' }
+        if (clean.isBlank()) return "شماره معتبر نیست"
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$clean")).apply {
+            if (text.isNotBlank()) putExtra("sms_body", text)
+        }
+        return if (launchIntent(intent)) "پیش‌نویس پیامک برای $clean باز شد (ارسال با خود کاربر است)"
+        else "برنامه پیامک در دسترس نیست"
+    }
+
+    private fun composeEmail(to: String, subject: String, body: String): String {
+        if (!to.contains("@")) return "آدرس ایمیل معتبر نیست"
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${to.trim()}")).apply {
+            if (subject.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, subject)
+            if (body.isNotBlank()) putExtra(Intent.EXTRA_TEXT, body)
+        }
+        return if (launchIntent(intent)) "پیش‌نویس ایمیل به $to باز شد (ارسال با خود کاربر است)"
+        else "برنامه ایمیل در دسترس نیست"
+    }
+
+    private fun openMaps(query: String): String {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        return if (launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")))) "نقشه برای «$query» باز شد"
+        else "برنامه نقشه در دسترس نیست"
+    }
+
     // ---------- long-term memory ----------
 
     private fun saveMemory(fact: String): String {
@@ -636,6 +781,13 @@ class ToolExecutor(
             "clipboard_read" -> "خواندن کلیپ‌بورد"
             "clipboard_write" -> "کپی در کلیپ‌بورد"
             "update_plan" -> "پلن کار"
+            "create_qr" -> "ساخت QR کد"
+            "get_exchange_rate" -> "نرخ ارز"
+            "wikipedia_summary" -> "ویکی‌پدیا"
+            "open_dialer" -> "شماره‌گیر"
+            "compose_sms" -> "پیش‌نویس پیامک"
+            "compose_email" -> "پیش‌نویس ایمیل"
+            "open_maps" -> "نقشه و مسیریابی"
             else -> name
         }
 
@@ -719,6 +871,30 @@ class ToolExecutor(
                     JSONObject().put("text", strProp("Text to copy")), listOf("text")))
                 put(fn("update_plan", "Show/update a live task plan checklist in the chat for multi-step work. Each line is one step, prefixed with its status: '[x] ' done, '[~] ' in progress, '[ ] ' pending. Call it at the start of a multi-step task and after each step completes. Keep steps short.",
                     JSONObject().put("plan", strProp("Full plan, one step per line, e.g.\n[x] جستجوی منابع\n[~] خواندن مقاله اصلی\n[ ] نوشتن جمع‌بندی")), listOf("plan")))
+                put(fn("create_qr", "Generate a QR code image from any text (link, Wi-Fi info, contact, plain text) and show it to the user in the chat.",
+                    JSONObject().put("text", strProp("The exact content to encode in the QR code")), listOf("text")))
+                put(fn("get_exchange_rate", "Get LIVE currency exchange rates and convert an amount between currencies (e.g. USD to IRR, EUR to USD). Uses official/mid-market rates.",
+                    JSONObject().put("amount", JSONObject().apply { put("type", "number"); put("description", "Amount to convert (default 1)") })
+                        .put("from", strProp("Source currency code, e.g. USD, EUR, IRR"))
+                        .put("to", strProp("Target currency code")),
+                    listOf("from", "to")))
+                put(fn("wikipedia_summary", "Get the Wikipedia summary of a topic/person/concept — a fast, reliable encyclopedic source. Try lang=fa first for Persian topics, lang=en for international ones.",
+                    JSONObject().put("title", strProp("Article title, e.g. سیاه‌چاله or Black hole"))
+                        .put("lang", strProp("Wikipedia language code: fa, en, … (default fa)")),
+                    listOf("title")))
+                put(fn("open_dialer", "Open the phone dialer pre-filled with a number (the user taps call themselves).",
+                    JSONObject().put("number", strProp("Phone number")), listOf("number")))
+                put(fn("compose_sms", "Open the SMS app with a pre-filled recipient and message (the user sends it themselves).",
+                    JSONObject().put("number", strProp("Recipient phone number"))
+                        .put("text", strProp("Message text")),
+                    listOf("number")))
+                put(fn("compose_email", "Open the email app with a pre-filled recipient, subject and body (the user sends it themselves).",
+                    JSONObject().put("to", strProp("Recipient email address"))
+                        .put("subject", strProp("Email subject"))
+                        .put("body", strProp("Email body")),
+                    listOf("to")))
+                put(fn("open_maps", "Open the maps app searching for a place/address or showing directions to it.",
+                    JSONObject().put("query", strProp("Place name or address, e.g. برج میلاد تهران")), listOf("query")))
             }
         }
     }
