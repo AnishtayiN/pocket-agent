@@ -29,8 +29,9 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings = Settings(app)
     val memoryStore = MemoryStore(app.filesDir)
+    val voice = Voice(app)
     private val client = AiClient()
-    private val tools = ToolExecutor(app, memoryStore)
+    private val tools = ToolExecutor(app, memoryStore, voice)
 
     val messages = mutableStateListOf<ChatMsg>()
     val isBusy = mutableStateOf(false)
@@ -39,6 +40,9 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
     val processingText = mutableStateOf("")
     val agentName = mutableStateOf(settings.agentName)
     val memoryEntries = mutableStateListOf<String>()
+    val themeMode = mutableStateOf(settings.themeMode)
+    val autoSpeak = mutableStateOf(settings.autoSpeak)
+    val isListening = mutableStateOf(false)
 
     /** Live streaming state for the in-flight answer. */
     val streamingText = mutableStateOf("")
@@ -194,6 +198,58 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         agentName.value = clean
     }
 
+    fun setThemeMode(mode: String) {
+        settings.themeMode = mode
+        themeMode.value = mode
+    }
+
+    fun setAutoSpeak(on: Boolean) {
+        settings.autoSpeak = on
+        autoSpeak.value = on
+        if (!on) voice.stopSpeaking()
+    }
+
+    /** Speak a finished answer aloud; returns false if no TTS is available. */
+    fun speakText(text: String): Boolean {
+        if (voice.isSpeaking) {
+            voice.stopSpeaking()
+            return true
+        }
+        return voice.speak(text)
+    }
+
+    /** Mic button: stream live transcription into the composer. */
+    fun startVoiceInput(
+        onPartial: (String) -> Unit,
+        onFinal: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (isListening.value) {
+            stopVoiceInput()
+            return
+        }
+        voice.stopSpeaking()
+        val ok = voice.listen(
+            onPartial = onPartial,
+            onResult = onFinal,
+            onDone = { err ->
+                isListening.value = false
+                if (err != null) onError(err)
+            }
+        )
+        if (ok) isListening.value = true else onError("تشخیص صدا روی این گوشی در دسترس نیست")
+    }
+
+    fun stopVoiceInput() {
+        voice.stopListening()
+        isListening.value = false
+    }
+
+    override fun onCleared() {
+        voice.shutdown()
+        super.onCleared()
+    }
+
     fun deleteMemoryAt(index: Int) {
         memoryStore.removeAt(index)
         refreshMemory()
@@ -218,12 +274,18 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         }
         return when (name) {
             "web_search", "web_research" -> args.optString("query").ifBlank { null }
-            "web_fetch" -> args.optString("url").ifBlank { null }
+            "web_fetch", "open_url" -> args.optString("url").ifBlank { null }
             "write_file", "read_file", "run_python_file", "process_file" ->
                 args.optString("name").ifBlank { null }
             "generate_image" -> args.optString("prompt").take(70).ifBlank { null }
             "save_memory" -> args.optString("fact").take(70).ifBlank { null }
             "delete_memory" -> args.optString("text").ifBlank { null }
+            "get_weather" -> args.optString("city").ifBlank { null }
+            "speak", "share_text", "clipboard_write" -> args.optString("text").take(70).ifBlank { null }
+            "set_timer" -> args.optInt("seconds").takeIf { it > 0 }?.let { "$it ثانیه" }
+            "set_alarm" -> "%02d:%02d".format(args.optInt("hour"), args.optInt("minute"))
+            "add_calendar_event" -> args.optString("title").ifBlank { null }
+            "set_flashlight" -> if (args.optBoolean("on")) "روشن" else "خاموش"
             else -> null
         }
     }
@@ -234,6 +296,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         var lastWrittenFile: String? = null
         var reasoning: String? = null
         var nudged = false
+        var planRowIndex: Int? = null
     }
 
     private fun runAgent() {
@@ -285,6 +348,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                             reasoning = state.reasoning
                         )
                     )
+                    if (settings.autoSpeak) voice.speak(finalAnswer)
                 } else if (!stopRequested) {
                     messages.add(ChatMsg(role = "assistant", content = "کار طولانی شد و متوقفش کردم. ساده‌تر بپرس یا دوباره تلاش کن."))
                 }
@@ -326,7 +390,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         lastUserText: String
     ): String? {
         var rounds = 0
-        while (rounds < 12) {
+        while (rounds < 16) {
             rounds++
             statusText.value = "در حال فکر کردن…"
             streamingText.value = ""
@@ -398,23 +462,42 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                 messages.add(ChatMsg(role = "assistant", content = reply.content))
             }
             for (tc in reply.toolCalls) {
+                val isPlan = tc.name == "update_plan"
                 val label = ToolExecutor.label(tc.name)
                 statusText.value = label + "…"
-                val rowIndex = messages.size
-                messages.add(
-                    ChatMsg(
-                        role = "tool-ui",
-                        content = "",
-                        toolLabel = label,
-                        toolName = tc.name,
-                        toolDetail = toolDetail(tc.name, tc.arguments),
-                        toolDone = false
+                val rowIndex = if (isPlan) -1 else messages.size
+                if (!isPlan) {
+                    messages.add(
+                        ChatMsg(
+                            role = "tool-ui",
+                            content = "",
+                            toolLabel = label,
+                            toolName = tc.name,
+                            toolDetail = toolDetail(tc.name, tc.arguments),
+                            toolDone = false
+                        )
                     )
-                )
+                }
                 persist()
                 val outcome = tools.execute(tc.name, tc.arguments)
-                if (rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
+                if (!isPlan && rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
                     messages[rowIndex] = messages[rowIndex].copy(toolDone = true)
+                }
+                if (isPlan) {
+                    val planText = try {
+                        JSONObject(tc.arguments).optString("plan")
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    if (planText.isNotBlank()) {
+                        val idx = state.planRowIndex
+                        if (idx != null && idx < messages.size && messages[idx].role == "plan-ui") {
+                            messages[idx] = messages[idx].copy(content = planText)
+                        } else {
+                            state.planRowIndex = messages.size
+                            messages.add(ChatMsg(role = "plan-ui", content = planText))
+                        }
+                    }
                 }
                 state.sources.addAll(outcome.sources)
                 if (tc.name == "write_file") {
@@ -524,7 +607,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         if (t.length < 8) return false
         val codeWords = listOf("کد", "بنویس", "بساز", "اسکریپت", "پایتون", "html", "فایل", "برنامه")
         if (codeWords.any { t.contains(it) }) return false
-        val deviceWords = listOf("شارژ", "باتری", "گوشیم", "گوشی من", "حافظه گوشی")
+        val deviceWords = listOf("شارژ", "باتری", "گوشیم", "گوشی من", "حافظه گوشی", "چراغ", "آلارم", "تایمر", "آب‌وهوا", "آب و هوا", "ویبره")
         if (deviceWords.any { t.contains(it) }) return false
         val qWords = listOf(
             "؟", "?", "چیست", "چیه", "چه", "کی", "کجا", "چرا", "چطور", "چگونه",
@@ -582,7 +665,8 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 آنچه همین حالا در حافظه بلندمدتت هست:
 ${memoryStore.asPromptText()}
 
-ابزارهایت: تحقیق و جستجوی زنده در وب و خواندن کامل صفحات، اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، و حافظه بلندمدت.
+ابزارهایت: تحقیق و جستجوی زنده در وب و خواندن کامل صفحات، آب‌وهوای زنده شهرها (get_weather)، اطلاعات باتری و مشخصات گوشی و وضعیت شبکه، ساعت و تاریخ، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، حافظه بلندمدت، و کنترل واقعی گوشی: تایمر و آلارم، رویداد تقویم، چراغ‌قوه، لرزش، کلیپ‌بورد، باز کردن لینک، اشتراک‌گذاری متن و خواندن متن با صدا (speak).
+پلن کار: برای هر کار چندمرحله‌ای (۳ قدم یا بیشتر) اول با update_plan یک پلن کوتاه و شفاف به کاربر نشان بده و بعد از انجام هر مرحله وضعیتش را به‌روز کن ([x] انجام‌شده، [~] در حال انجام، [ ] در انتظار). برای کارهای ساده و تک‌مرحله‌ای پلن نساز.
 کدنویسی و تحویل فایل (خیلی مهم): وقتی کاربر از تو کد می‌خواهد (پایتون، HTML یا هر زبان):
 ۱) کد را کامل و تمیز با write_file در فایلی با پسوند درست بنویس (مثلاً script.py یا index.html) — کد نصفه یا نمونه‌وار نده.
 ۲) اگر پایتون است، حتماً با run_python_file اجرایش کن. اگر خطا داد، traceback را بخوان، فایل را با write_file اصلاح کن و دوباره اجرا کن؛ این چرخه را تا اجرای موفق ادامه بده. اگر بعد از چند تلاش درست نشد، صادقانه بگو کجا گیر کرده.
@@ -590,7 +674,9 @@ ${memoryStore.asPromptText()}
 پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
 - وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
-- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن.
+- برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن؛ برای آب‌وهوا از get_weather (اسم شهر را انگلیسی بده).
+- برای «یادم بنداز»، «بیدارم کن» و زمان‌بندی از set_alarm یا set_timer استفاده کن؛ برای قرار و جلسه از add_calendar_event.
+- اگر کاربر گفت چیزی را بلند بخوان یا بگو، از speak استفاده کن.
 - اگر ابزاری خطا داد، صادقانه و کوتاه بگو."""
     }
 
