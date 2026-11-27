@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.PocketAgent" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#F2F6FB</item>
-        <item name="android:statusBarColor">#F2F6FB</item>
-        <item name="android:navigationBarColor">#F2F6FB</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#070B14</item>
+        <item name="android:statusBarColor">#070B14</item>
+        <item name="android:navigationBarColor">#070B14</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>
