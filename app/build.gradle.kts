@@ -18,9 +18,8 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
-        python {
-            version = "3.11"
-        }
+        // Chaquopy: the python version is left at the plugin default on purpose —
+        // the Kotlin DSL cannot resolve a `python {}` block inside defaultConfig.
     }
 
     signingConfigs {
