@@ -51,17 +51,29 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -102,13 +114,22 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.delay
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -241,9 +262,16 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
     val processing by viewModel.isProcessing
     val listState = rememberLazyListState()
 
+    val streaming by viewModel.streamingText
+    val itemCount = messages.size + if (busy) 1 else 0
     LaunchedEffect(messages.size, busy, processing) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+        if (itemCount > 0) {
+            listState.animateScrollToItem(itemCount - 1)
+        }
+    }
+    LaunchedEffect(streaming.length / 90) {
+        if (busy && itemCount > 0) {
+            listState.scrollToItem(itemCount - 1)
         }
     }
 
@@ -264,6 +292,7 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                         .fillMaxWidth()
                 )
             } else {
+                val lastAssistantIndex = messages.indexOfLast { it.role == "assistant" }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -272,15 +301,34 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    items(messages) { msg ->
+                    itemsIndexed(messages) { index, msg ->
                         Box(
                             modifier = Modifier.animateItem(
                                 placementSpec = spring(stiffness = Spring.StiffnessLow)
                             )
-                        ) { MessageRow(msg) }
+                        ) {
+                            MessageRow(
+                                msg = msg,
+                                isLastAssistant = index == lastAssistantIndex,
+                                busy = busy,
+                                onRegenerate = { viewModel.regenerate() }
+                            )
+                        }
                     }
                     if (busy) {
-                        item { TypingBubble(viewModel.statusText.value) }
+                        item(key = "live") {
+                            if (streaming.isNotBlank()) {
+                                StreamingBubble(
+                                    text = streaming,
+                                    reasoning = viewModel.reasoningText.value
+                                )
+                            } else {
+                                ThinkingBubble(
+                                    status = viewModel.statusText.value,
+                                    reasoning = viewModel.reasoningText.value
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -368,8 +416,8 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
         Suggestion("شارژ گوشیم چنده؟", Icons.Filled.BatteryFull),
         Suggestion("یه عکس از غروب کرمانشاه بساز", Icons.Filled.Image),
         Suggestion("یه کد پایتون بنویس که عدد اول رو پیدا کنه", Icons.Filled.Code),
-        Suggestion("اخبار امروز چیه؟", Icons.Filled.Newspaper),
-        Suggestion("ساعت و تاریخ امروز رو بگو", Icons.Filled.Schedule)
+        Suggestion("اخبار امروز رو کامل و با منبع بگو", Icons.Filled.Newspaper),
+        Suggestion("یه تحقیق کامل درباره سیاه‌چاله‌ها بکن", Icons.Filled.Public)
     )
     Column(
         modifier = modifier.padding(28.dp),
@@ -387,7 +435,7 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "ایجنت شخصی تو روی این گوشی‌ام. حافظه دارم، سرچ می‌کنم، عکس می‌سازم، فایل و عکس رو پردازش می‌کنم و کد پایتون می‌نویسم، اجراش می‌کنم و دیباگ‌شده تحویلت می‌دم:",
+            text = "ایجنت شخصی تو روی این گوشی‌ام. قبل از هر جواب فکر می‌کنم، برای هر سؤال در وب تحقیق می‌کنم و با منبع جواب کامل می‌دم. حافظه دارم، عکس می‌سازم، فایل و عکس رو پردازش می‌کنم و کد پایتون می‌نویسم، اجراش می‌کنم و دیباگ‌شده تحویلت می‌دم:",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -421,30 +469,46 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
     }
 }
 
+/** Live "thinking" state, like the big AI apps: pulsing brain icon, elapsed
+ *  seconds, animated dots and a muted live preview of the model's reasoning. */
 @Composable
-private fun TypingBubble(status: String) {
+private fun ThinkingBubble(status: String, reasoning: String) {
     val transition = rememberInfiniteTransition(label = "typing")
+    var seconds by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            seconds++
+        }
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.End
     ) {
-        Box(
+        Column(
             modifier = Modifier
+                .widthIn(max = 330.dp)
                 .shadow(3.dp, RoundedCornerShape(20.dp))
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color.White)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 15.dp, vertical = 12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (status.isNotBlank()) {
-                    Text(
-                        text = status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(10.dp))
-                }
+                Icon(
+                    Icons.Filled.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = status.ifBlank { "در حال فکر کردن…" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
                 for (i in 0..2) {
                     val a by transition.animateFloat(
                         initialValue = 0.25f,
@@ -457,12 +521,209 @@ private fun TypingBubble(status: String) {
                     )
                     Box(
                         modifier = Modifier
-                            .size(7.dp)
+                            .size(6.dp)
                             .alpha(a)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary)
                     )
-                    if (i < 2) Spacer(Modifier.width(5.dp))
+                    if (i < 2) Spacer(Modifier.width(4.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                if (seconds > 0) {
+                    Text(
+                        text = "${seconds}ث",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (reasoning.isNotBlank()) {
+                Spacer(Modifier.height(9.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFFF2F6FB))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = reasoning.takeLast(600),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The answer appearing token-by-token, with a blinking cursor. */
+@Composable
+private fun StreamingBubble(text: String, reasoning: String) {
+    val transition = rememberInfiniteTransition(label = "cursor")
+    val cursorAlpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(530), RepeatMode.Reverse),
+        label = "cursorAlpha"
+    )
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.End
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = 330.dp)
+                .shadow(3.dp, RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color.White)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Column {
+                if (reasoning.isNotBlank()) {
+                    ReasoningSection(reasoning = reasoning, live = true)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        MessageContent(text)
+                    }
+                    Text(
+                        text = "▌",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.alpha(cursorAlpha)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Collapsible "فرایند فکر" card on a finished answer. */
+@Composable
+private fun ReasoningSection(reasoning: String, live: Boolean = false) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF2F6FB))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 11.dp, vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.Psychology,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = if (live) "در حال فکر کردن…" else "فرایند فکر",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = reasoning,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else if (live) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = reasoning.takeLast(300),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** Web sources of an answer: tappable domain chips. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SourcesSection(sources: String) {
+    val context = LocalContext.current
+    val urls = sources.lines().map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    if (urls.isEmpty()) return
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Link,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                text = "منابع",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            urls.take(8).forEach { url ->
+                val host = try {
+                    android.net.Uri.parse(url).host ?: url
+                } catch (e: Exception) {
+                    url
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFFEAF3F8))
+                        .border(1.dp, Color(0xFFBFE3EE), RoundedCornerShape(50))
+                        .clickable {
+                            try {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                )
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "لینک باز نشد", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.Public,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        text = host.removePrefix("www."),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF155E6B)
+                    )
                 }
             }
         }
@@ -487,8 +748,9 @@ private fun AttachedImage(path: String) {
     }
 }
 
-/** Renders assistant text with proper code blocks (``` fences): dark card,
- *  language label, copy button, monospace, horizontal scroll. */
+/** Renders assistant text as real markdown: headings, bold/italic, inline
+ *  code, clickable links, bullet & numbered lists, quotes — plus proper
+ *  code blocks (``` fences): dark card, language label, copy button. */
 @Composable
 private fun MessageContent(text: String) {
     val parts = text.split("```")
@@ -497,9 +759,230 @@ private fun MessageContent(text: String) {
             if (idx % 2 == 1) {
                 CodeBlock(part)
             } else if (part.isNotBlank()) {
-                Text(text = part.trim(), color = MaterialTheme.colorScheme.onSurface)
+                MarkdownBlocks(part.trim())
             }
             if (idx < parts.size - 1) Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+private fun isBullet(line: String) =
+    line.startsWith("- ") || line.startsWith("* ") || line.startsWith("• ")
+
+private fun isNumbered(line: String) = line.matches(Regex("^\\d{1,3}[.)]\\s.*"))
+
+@Composable
+private fun HeadingText(text: String, level: Int) {
+    val style = when (level) {
+        1 -> MaterialTheme.typography.titleLarge
+        2 -> MaterialTheme.typography.titleMedium
+        else -> MaterialTheme.typography.titleSmall
+    }
+    Text(
+        text = parseInline(text),
+        style = style,
+        fontWeight = FontWeight.ExtraBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+}
+
+@Composable
+private fun MarkdownBlocks(text: String) {
+    val lines = text.lines()
+    var i = 0
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            when {
+                line.isBlank() -> i++
+                line.startsWith("### ") -> {
+                    HeadingText(line.drop(4), 3); i++
+                }
+                line.startsWith("## ") -> {
+                    HeadingText(line.drop(3), 2); i++
+                }
+                line.startsWith("# ") -> {
+                    HeadingText(line.drop(2), 1); i++
+                }
+                line == "---" || line == "***" || line == "___" -> {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant)
+                    )
+                    i++
+                }
+                isBullet(line) || isNumbered(line) -> {
+                    val items = mutableListOf<String>()
+                    while (i < lines.size &&
+                        (isBullet(lines[i].trim()) || isNumbered(lines[i].trim()))
+                    ) {
+                        items.add(lines[i].trim())
+                        i++
+                    }
+                    items.forEach { item ->
+                        if (isBullet(item)) {
+                            Row {
+                                Text(
+                                    text = "•",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    text = parseInline(item.drop(2).trim()),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        } else {
+                            val marker = item.takeWhile { it.isDigit() || it == '.' || it == ')' }
+                            Row {
+                                Text(
+                                    text = marker,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    text = parseInline(item.drop(marker.length).trim()),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+                line.startsWith("> ") -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFF2F6FB))
+                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = parseInline(line.drop(2)),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    i++
+                }
+                else -> {
+                    val para = StringBuilder(line)
+                    i++
+                    while (i < lines.size) {
+                        val next = lines[i].trim()
+                        if (next.isBlank() || next.startsWith("#") || isBullet(next) ||
+                            isNumbered(next) || next.startsWith("> ") ||
+                            next == "---" || next == "***"
+                        ) break
+                        para.append(' ').append(next)
+                        i++
+                    }
+                    Text(
+                        text = parseInline(para.toString()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Inline markdown: **bold**, *italic*, `code`, [label](url) clickable links. */
+private fun parseInline(text: String): AnnotatedString = buildAnnotatedString {
+    val linkStyles = TextLinkStyles(
+        SpanStyle(
+            color = Color(0xFF0369A1),
+            textDecoration = TextDecoration.Underline,
+            fontWeight = FontWeight.Bold
+        )
+    )
+    var i = 0
+    while (i < text.length) {
+        when {
+            text.startsWith("**", i) -> {
+                val end = text.indexOf("**", i + 2)
+                if (end > i + 2) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(text.substring(i + 2, end))
+                    }
+                    i = end + 2
+                } else {
+                    append("**")
+                    i += 2
+                }
+            }
+            text[i] == '`' -> {
+                val end = text.indexOf('`', i + 1)
+                if (end > i + 1) {
+                    withStyle(
+                        SpanStyle(
+                            fontFamily = FontFamily.Monospace,
+                            background = Color(0xFFE7EEF7)
+                        )
+                    ) {
+                        append(text.substring(i + 1, end))
+                    }
+                    i = end + 1
+                } else {
+                    append('`')
+                    i++
+                }
+            }
+            text[i] == '[' -> {
+                val closeBracket = text.indexOf(']', i + 1)
+                val closeParen = if (closeBracket > i && closeBracket + 1 < text.length &&
+                    text[closeBracket + 1] == '('
+                ) {
+                    text.indexOf(')', closeBracket + 2)
+                } else {
+                    -1
+                }
+                if (closeBracket > i && closeParen > closeBracket) {
+                    val label = text.substring(i + 1, closeBracket)
+                    val url = text.substring(closeBracket + 2, closeParen)
+                    val start = length
+                    withStyle(
+                        SpanStyle(
+                            color = Color(0xFF0369A1),
+                            textDecoration = TextDecoration.Underline
+                        )
+                    ) {
+                        append(label)
+                    }
+                    addLink(LinkAnnotation.Url(url, linkStyles), start, length)
+                    i = closeParen + 1
+                } else {
+                    append('[')
+                    i++
+                }
+            }
+            text[i] == '*' || text[i] == '_' -> {
+                val marker = text[i]
+                val end = text.indexOf(marker, i + 1)
+                if (end > i + 1) {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                        append(text.substring(i + 1, end))
+                    }
+                    i = end + 1
+                } else {
+                    append(marker)
+                    i++
+                }
+            }
+            else -> {
+                append(text[i])
+                i++
+            }
         }
     }
 }
@@ -647,34 +1130,91 @@ private fun FileCard(path: String) {
     }
 }
 
+private fun toolIcon(name: String?): ImageVector = when (name) {
+    "web_search" -> Icons.Filled.Search
+    "web_fetch" -> Icons.Filled.Language
+    "web_research" -> Icons.Filled.Public
+    "generate_image" -> Icons.Filled.Image
+    "write_file" -> Icons.Filled.Code
+    "read_file", "process_file" -> Icons.Filled.Description
+    "run_python", "run_python_file" -> Icons.Filled.PlayArrow
+    "get_battery_info" -> Icons.Filled.BatteryFull
+    "get_current_time" -> Icons.Filled.Schedule
+    "save_memory", "read_memory", "delete_memory" -> Icons.Filled.Memory
+    else -> Icons.Filled.Build
+}
+
+/** Live activity card for one tool call: spinner while running, green check
+ *  when done, with the query / file name / URL as detail. */
 @Composable
-private fun MessageRow(msg: ChatMsg) {
-    when (msg.role) {
-        "tool-ui" -> {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(Color(0xFFE0F5FA))
-                        .border(1.dp, Color(0xFF9ADBE8), RoundedCornerShape(50))
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.Build,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(6.dp))
+private fun ToolCard(msg: ChatMsg) {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Row(
+            modifier = Modifier
+                .widthIn(max = 330.dp)
+                .shadow(2.dp, RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE0F5FA)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    toolIcon(msg.toolName),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = msg.toolLabel ?: "ابزار",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                val detail = msg.toolDetail
+                if (!detail.isNullOrBlank()) {
                     Text(
-                        text = msg.toolLabel ?: "ابزار",
+                        text = detail,
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF155E6B)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
+            Spacer(Modifier.width(8.dp))
+            if (msg.toolDone) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp),
+                    tint = Color(0xFF10B981)
+                )
+            } else {
+                CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
+            }
         }
+    }
+}
+
+@Composable
+private fun MessageRow(
+    msg: ChatMsg,
+    isLastAssistant: Boolean = false,
+    busy: Boolean = false,
+    onRegenerate: () -> Unit = {}
+) {
+    when (msg.role) {
+        "tool-ui" -> ToolCard(msg)
         "user" -> {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -726,6 +1266,11 @@ private fun MessageRow(msg: ChatMsg) {
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Column {
+                        val reasoning = msg.reasoning
+                        if (!reasoning.isNullOrBlank()) {
+                            ReasoningSection(reasoning)
+                            if (msg.content.isNotBlank()) Spacer(Modifier.height(9.dp))
+                        }
                         if (msg.content.isNotBlank()) {
                             MessageContent(msg.content)
                         }
@@ -739,15 +1284,53 @@ private fun MessageRow(msg: ChatMsg) {
                             Spacer(Modifier.height(9.dp))
                             FileCard(delivered)
                         }
-                        val t = timeLabel(msg.time)
-                        if (t.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = t,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.End)
-                            )
+                        val sources = msg.sources
+                        if (!sources.isNullOrBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            SourcesSection(sources)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val clipboard = LocalClipboardManager.current
+                            val context = LocalContext.current
+                            IconButton(
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(msg.content))
+                                    Toast.makeText(context, "کپی شد", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.ContentCopy,
+                                    contentDescription = "کپی پاسخ",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isLastAssistant && !busy) {
+                                IconButton(
+                                    onClick = onRegenerate,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Refresh,
+                                        contentDescription = "تولید دوباره پاسخ",
+                                        modifier = Modifier.size(17.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            val t = timeLabel(msg.time)
+                            if (t.isNotBlank()) {
+                                Text(
+                                    text = t,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -846,23 +1429,44 @@ private fun InputBar(viewModel: AgentViewModel) {
             )
         }
         Spacer(Modifier.width(9.dp))
-        Box(
-            modifier = Modifier
-                .size(50.dp)
-                .shadow(7.dp, CircleShape)
-                .clip(CircleShape)
-                .background(
-                    if (input.isNotBlank() && !busy) AccentBrush
-                    else Brush.linearGradient(listOf(Color(0xFFCBD8E8), Color(0xFFCBD8E8)))
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            IconButton(onClick = { submit() }, enabled = input.isNotBlank() && !busy && !processing) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "ارسال",
-                    tint = Color.White
-                )
+        if (busy) {
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .shadow(7.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(listOf(Color(0xFFEF4444), Color(0xFFDC2626)))
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = { viewModel.stop() }) {
+                    Icon(
+                        Icons.Filled.Stop,
+                        contentDescription = "توقف",
+                        tint = Color.White
+                    )
+                }
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .shadow(7.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(
+                        if (input.isNotBlank()) AccentBrush
+                        else Brush.linearGradient(listOf(Color(0xFFCBD8E8), Color(0xFFCBD8E8)))
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = { submit() }, enabled = input.isNotBlank() && !processing) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "ارسال",
+                        tint = Color.White
+                    )
+                }
             }
         }
     }
@@ -988,7 +1592,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
             item {
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "ایجنت جیبی — نسخه ۴٫۰٫۰",
+                    text = "ایجنت جیبی — نسخه ۵٫۰٫۰",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
