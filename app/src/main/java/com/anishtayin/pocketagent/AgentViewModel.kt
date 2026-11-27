@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,8 +17,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Runs the agent loop: model -> tool calls -> results -> model, until a final answer.
- *  The agent has a name and a long-term memory that is injected into every session. */
+/** Runs the agent loop: model (streaming, with thinking) -> tool calls ->
+ *  results -> model, until a final answer. The agent has a name and a
+ *  long-term memory that is injected into every session. Web search is its
+ *  default mode for factual questions. */
 class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings = Settings(app)
@@ -32,6 +36,14 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
     val agentName = mutableStateOf(settings.agentName)
     val memoryEntries = mutableStateListOf<String>()
 
+    /** Live streaming state for the in-flight answer. */
+    val streamingText = mutableStateOf("")
+    val reasoningText = mutableStateOf("")
+
+    private var agentJob: Job? = null
+    @Volatile
+    private var stopRequested = false
+
     private val historyFile = File(app.filesDir, "history.json")
 
     init {
@@ -45,6 +57,26 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         val trimmed = text.trim()
         if (trimmed.isBlank() || isBusy.value) return
         messages.add(ChatMsg(role = "user", content = trimmed))
+        persist()
+        runAgent()
+    }
+
+    /** Stop button: cancel the in-flight request and the agent loop. */
+    fun stop() {
+        if (!isBusy.value) return
+        stopRequested = true
+        client.cancelActive()
+        agentJob?.cancel()
+    }
+
+    /** Re-run the last user message, dropping the previous answer. */
+    fun regenerate() {
+        if (isBusy.value || isProcessing.value) return
+        val lastUser = messages.indexOfLast { it.role == "user" }
+        if (lastUser < 0) return
+        while (messages.size > lastUser + 1) {
+            messages.removeAt(messages.size - 1)
+        }
         persist()
         runAgent()
     }
@@ -173,26 +205,74 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         memoryEntries.addAll(memoryStore.all())
     }
 
+    /** Short human detail shown on a tool activity card. */
+    private fun toolDetail(name: String, argumentsJson: String): String? {
+        val args = try {
+            JSONObject(argumentsJson.ifBlank { "{}" })
+        } catch (e: Exception) {
+            return null
+        }
+        return when (name) {
+            "web_search", "web_research" -> args.optString("query").ifBlank { null }
+            "web_fetch" -> args.optString("url").ifBlank { null }
+            "write_file", "read_file", "run_python_file", "process_file" ->
+                args.optString("name").ifBlank { null }
+            "generate_image" -> args.optString("prompt").take(70).ifBlank { null }
+            "save_memory" -> args.optString("fact").take(70).ifBlank { null }
+            "delete_memory" -> args.optString("text").ifBlank { null }
+            else -> null
+        }
+    }
+
     private fun runAgent() {
         isBusy.value = true
-        viewModelScope.launch {
+        stopRequested = false
+        streamingText.value = ""
+        reasoningText.value = ""
+        agentJob = viewModelScope.launch {
             try {
                 val apiMessages = buildApiMessages()
                 var finished = false
                 var rounds = 0
                 var lastWrittenFile: String? = null
-                while (!finished && rounds < 8) {
+                val turnSources = LinkedHashSet<String>()
+                var turnReasoning: String? = null
+                while (!finished && rounds < 12) {
                     rounds++
                     statusText.value = "در حال فکر کردن…"
-                    val reply = client.chat(apiMessages, ToolExecutor.specs())
+                    streamingText.value = ""
+                    reasoningText.value = ""
+                    val reply = client.chat(apiMessages, ToolExecutor.specs()) { ev ->
+                        when (ev) {
+                            is StreamEvent.Content -> {
+                                streamingText.value += ev.text
+                                statusText.value = "در حال نوشتن پاسخ…"
+                            }
+                            is StreamEvent.Reasoning -> {
+                                reasoningText.value += ev.text
+                                statusText.value = "در حال فکر کردن…"
+                            }
+                        }
+                    }
+                    if (!reply.reasoning.isNullOrBlank()) {
+                        turnReasoning = reply.reasoning
+                    } else if (reasoningText.value.isNotBlank()) {
+                        turnReasoning = reasoningText.value
+                    }
+                    val streamed = streamingText.value
+                    streamingText.value = ""
                     if (reply.toolCalls.isEmpty()) {
                         val answer = reply.content?.takeIf { it.isNotBlank() }
+                            ?: streamed.takeIf { it.isNotBlank() }
                             ?: "پاسخی برنگشت. دوباره تلاش کن."
                         messages.add(
                             ChatMsg(
                                 role = "assistant",
                                 content = answer,
-                                filePath = lastWrittenFile
+                                filePath = lastWrittenFile,
+                                sources = if (turnSources.isEmpty()) null
+                                else turnSources.joinToString("\n"),
+                                reasoning = turnReasoning
                             )
                         )
                         finished = true
@@ -220,9 +300,23 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                         for (tc in reply.toolCalls) {
                             val label = ToolExecutor.label(tc.name)
                             statusText.value = label + "…"
-                            messages.add(ChatMsg(role = "tool-ui", content = "", toolLabel = label))
+                            val rowIndex = messages.size
+                            messages.add(
+                                ChatMsg(
+                                    role = "tool-ui",
+                                    content = "",
+                                    toolLabel = label,
+                                    toolName = tc.name,
+                                    toolDetail = toolDetail(tc.name, tc.arguments),
+                                    toolDone = false
+                                )
+                            )
                             persist()
                             val outcome = tools.execute(tc.name, tc.arguments)
+                            if (rowIndex < messages.size && messages[rowIndex].role == "tool-ui") {
+                                messages[rowIndex] = messages[rowIndex].copy(toolDone = true)
+                            }
+                            turnSources.addAll(outcome.sources)
                             if (tc.name == "write_file") {
                                 val fname = try {
                                     JSONObject(tc.arguments).optString("name")
@@ -258,13 +352,29 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
                 if (!finished) {
                     messages.add(ChatMsg(role = "assistant", content = "کار طولانی شد و متوقفش کردم. ساده‌تر بپرس یا دوباره تلاش کن."))
                 }
+            } catch (e: CancellationException) {
+                val partial = streamingText.value
+                if (partial.isNotBlank()) {
+                    messages.add(
+                        ChatMsg(
+                            role = "assistant",
+                            content = partial + "\n\n⏹ پاسخ متوقف شد."
+                        )
+                    )
+                }
             } catch (e: AiException) {
-                messages.add(ChatMsg(role = "assistant", content = "⚠️ خطا از سرویس هوش مصنوعی:\n${e.message}"))
+                if (!stopRequested) {
+                    messages.add(ChatMsg(role = "assistant", content = "⚠️ خطا از سرویس هوش مصنوعی:\n${e.message}"))
+                }
             } catch (e: Exception) {
-                messages.add(ChatMsg(role = "assistant", content = "⚠️ خطا: ${e.message ?: "نامشخص"}"))
+                if (!stopRequested) {
+                    messages.add(ChatMsg(role = "assistant", content = "⚠️ خطا: ${e.message ?: "نامشخص"}"))
+                }
             } finally {
                 isBusy.value = false
                 statusText.value = ""
+                streamingText.value = ""
+                reasoningText.value = ""
                 persist()
             }
         }
@@ -307,18 +417,24 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
 
 شخصیت: گرم، باهوش، کنجکاو و کمی شوخ‌طبع. با کاربر مثل یک دوست صمیمی و قابل‌اعتماد حرف می‌زنی. به همان زبانی جواب بده که کاربر می‌نویسد (معمولاً فارسی). جواب‌ها را به‌اندازه نگه دار: نه خشک و تک‌کلمه‌ای، نه پرحرف.
 
+روش کار پیش‌فرض — فکر کردن و جستجو (خیلی مهم):
+- حالت thinking برایت فعال است: قبل از هر جواب، قدم‌به‌قدم و با دقت فکر کن؛ عجله نکن.
+- تو یک ایجنتِ محقق هستی، نه یک دانشنامه ثابت و قدیمی. جستجوی وب حالت عادی توست: برای هر سؤال اطلاعاتی و واقعی — حتی سؤال‌هایی که فکر می‌کنی جوابشان را می‌دانی — اول در وب جستجو کن و جواب را بر اساس نتایج تازه و واقعی بساز، نه حدس از حافظه. دانش درونی‌ات ممکن است قدیمی یا ناقص باشد؛ وب، منبع اصلی توست.
+- برای سؤال‌های مهم، پیچیده یا چندبخشی از web_research استفاده کن (چند منبع را کامل می‌خواند و اطلاعات کامل جمع می‌کند). برای سؤال‌های ساده‌تر یک یا دو web_search کافی است و اگر خلاصه‌ها کافی نبود، نتیجه مهم را با web_fetch کامل بخوان. اگر نتایج اول ناقص بود، با عبارت متفاوت دوباره جستجو کن.
+- فقط این‌ها بدون جستجو جواب داده می‌شوند: گپ‌وگفت و احوال‌پرسی، ریاضی و منطق و کدنویسی، سؤال درباره خود گوشی کاربر (با ابزارهای دستگاه)، و چیزهایی که در حافظه بلندمدتت از کاربر داری.
+- جواب نهایی را کامل، دقیق و ساخت‌یافته بنویس: وقتی جواب طولانی است از تیتر (##)، فهرست و **متن پررنگ** استفاده کن. در پایانِ جواب‌هایی که از وب استفاده کرده‌ای، بخش کوتاهی به نام «منابع» با لینک‌های واقعی نتایج بیاور.
+
 حافظه بلندمدت: تو حافظه داری و بین گفتگوها یادت می‌ماند. هر وقت چیز مهم و ماندگاری درباره کاربر فهمیدی — اسمش، شهرش، علاقه‌ها و سلیقه‌اش، آدم‌های مهم زندگی‌اش، هدف‌ها، پروژه‌ها و تصمیم‌هایش — همان موقع با ابزار save_memory ذخیره‌اش کن، بی‌آن‌که لازم باشد هر بار اعلامش کنی. اگر کاربر گفت چیزی را فراموش کنی، با delete_memory پاکش کن. از چیزهایی که در حافظه داری طبیعی استفاده کن (مثلاً اسمش را صدا بزن) ولی فهرست‌وار تکرارشان نکن.
 آنچه همین حالا در حافظه بلندمدتت هست:
 ${memoryStore.asPromptText()}
 
-ابزارهایت: اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، جستجوی زنده در وب و خواندن صفحات وب، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، و حافظه بلندمدت.
+ابزارهایت: تحقیق و جستجوی زنده در وب و خواندن کامل صفحات، اطلاعات باتری و مشخصات گوشی، ساعت و تاریخ، ساخت عکس، فایل‌های کاری خصوصی (خواندن/نوشتن/فهرست/پردازش)، اجرای واقعی پایتون روی گوشی، و حافظه بلندمدت.
 کدنویسی و تحویل فایل (خیلی مهم): وقتی کاربر از تو کد می‌خواهد (پایتون، HTML یا هر زبان):
 ۱) کد را کامل و تمیز با write_file در فایلی با پسوند درست بنویس (مثلاً script.py یا index.html) — کد نصفه یا نمونه‌وار نده.
 ۲) اگر پایتون است، حتماً با run_python_file اجرایش کن. اگر خطا داد، traceback را بخوان، فایل را با write_file اصلاح کن و دوباره اجرا کن؛ این چرخه را تا اجرای موفق ادامه بده. اگر بعد از چند تلاش درست نشد، صادقانه بگو کجا گیر کرده.
 ۳) در پیام پایانی خیلی کوتاه بگو چه ساخته شد، اسم فایل چیست و (برای پایتون) نتیجه اجرا چه بود. فایل به‌صورت خودکار همراه همان پیام به کاربر تحویل داده می‌شود، پس لازم نیست کل کد را در متن پیام تکرار کنی؛ مگر کاربر خودش بخواهد.
 پیوست‌ها: کاربر می‌تواند عکس و فایل پیوست کند. تو خودت تصویر را نمی‌بینی؛ اما نتیجه پردازش روی گوشی (متن OCR، رنگ‌های غالب، ابعاد، متن استخراج‌شده از PDF یا فایل) با برچسب [داده پیوست] در گفتگو می‌آید — بر اساس همان داده‌ها جواب بده و اگر داده کافی نیست صادقانه بگو. فایل‌های پیوست‌شده داخل پوشه کاری ذخیره می‌شوند و بعداً هم با process_file و read_file در دسترس‌اند.
 قوانین:
-- برای اطلاعات تازه یا نامطمئن (اخبار، قیمت‌ها، برنامه مسابقات، هوا و...) حتماً از web_search استفاده کن و در صورت نیاز صفحه را با web_fetch بخوان؛ از حافظه حدس نزن.
 - وقتی کاربر عکس یا تصویر خواست، با generate_image بساز و پرامپت را انگلیسی و با جزئیات بنویس.
 - برای سؤال درباره شارژ یا گوشی، از ابزار باتری و مشخصات استفاده کن.
 - اگر ابزاری خطا داد، صادقانه و کوتاه بگو."""
