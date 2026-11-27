@@ -23,7 +23,7 @@ class AiException(message: String) : Exception(message)
  *  - Works with any provider whose base URL + model are set in Settings.
  *  - Retries 429/503 up to 3 times with backoff; paces requests to ~1/second
  *    (the default free provider allows 1 request/second per IP). */
-class AiClient(private val settings: Settings) {
+class AiClient {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -47,7 +47,7 @@ class AiClient(private val settings: Settings) {
 
     suspend fun chat(messages: JSONArray, tools: JSONArray?): AiReply {
         val body = JSONObject().apply {
-            put("model", settings.model)
+            put("model", AiConfig.MODEL)
             put("messages", messages)
             put("max_tokens", 4096)
             if (tools != null) {
@@ -75,11 +75,11 @@ class AiClient(private val settings: Settings) {
 
     private suspend fun executeOnce(body: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         val req = Request.Builder()
-            .url(settings.baseUrl + "/chat/completions")
+            .url(AiConfig.BASE_URL + "/chat/completions")
             .header("Content-Type", "application/json")
             .apply {
-                if (settings.apiKey.isNotBlank()) {
-                    header("Authorization", "Bearer " + settings.apiKey)
+                if (AiConfig.API_KEY.isNotBlank()) {
+                    header("Authorization", "Bearer " + AiConfig.API_KEY)
                 }
             }
             .post(body.toRequestBody("application/json".toMediaType()))
