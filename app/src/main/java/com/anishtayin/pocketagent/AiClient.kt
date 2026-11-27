@@ -42,8 +42,10 @@ class AiClient {
         val paceMs: Long
     )
 
-    private val primary = Provider(AiConfig.BASE_URL, AiConfig.MODEL, AiConfig.API_KEY, true, 1100L)
-    private val fallback = Provider(AiConfig.FALLBACK_BASE_URL, AiConfig.FALLBACK_MODEL, "", false, 300L)
+    // Primary (Pollinations / gpt-oss) reasons natively — no param needed.
+    // Fallback (APIsFreeLLM) needs its explicit reasoning switch.
+    private val primary = Provider(AiConfig.BASE_URL, AiConfig.MODEL, AiConfig.API_KEY, false, 1200L)
+    private val fallback = Provider(AiConfig.FALLBACK_BASE_URL, AiConfig.FALLBACK_MODEL, AiConfig.FALLBACK_API_KEY, true, 1100L)
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
