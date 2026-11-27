@@ -18,7 +18,7 @@ object AiConfig {
     const val FALLBACK_API_KEY = ""
 }
 
-/** User-facing settings: only the agent's identity lives here now. */
+/** User-facing settings: identity, appearance and voice. */
 class Settings(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("pocket_agent_settings", Context.MODE_PRIVATE)
@@ -26,6 +26,16 @@ class Settings(context: Context) {
     var agentName: String
         get() = prefs.getString("agent_name", DEFAULT_AGENT_NAME) ?: DEFAULT_AGENT_NAME
         set(value) = prefs.edit().putString("agent_name", value.trim()).apply()
+
+    /** "system" | "light" | "dark" */
+    var themeMode: String
+        get() = prefs.getString("theme_mode", "system") ?: "system"
+        set(value) = prefs.edit().putString("theme_mode", value).apply()
+
+    /** Read every finished answer aloud automatically (TTS). */
+    var autoSpeak: Boolean
+        get() = prefs.getBoolean("auto_speak", false)
+        set(value) = prefs.edit().putBoolean("auto_speak", value).apply()
 
     companion object {
         const val DEFAULT_AGENT_NAME = "جیبی"
