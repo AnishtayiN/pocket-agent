@@ -12,8 +12,8 @@ android {
         applicationId = "com.anishtayin.pocketagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
     }
 
     signingConfigs {
@@ -60,4 +60,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.pdfbox.android)
+    implementation(libs.androidx.palette.ktx)
 }
