@@ -26,8 +26,9 @@ import java.util.concurrent.TimeUnit
 data class ToolOutcome(val text: String, val imagePath: String? = null)
 
 /** The agent's hands: device info, web (Keenable, keyless public tier),
- *  image generation (Pollinations, keyless) and a private file workspace. */
-class ToolExecutor(private val context: Context) {
+ *  image generation (Pollinations, keyless), a private file workspace,
+ *  and long-term memory about the user. */
+class ToolExecutor(private val context: Context, private val memory: MemoryStore) {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -56,6 +57,9 @@ class ToolExecutor(private val context: Context) {
                 "write_file" -> ToolOutcome(writeFile(args.getString("name"), args.getString("content")))
                 "read_file" -> ToolOutcome(readFile(args.getString("name")))
                 "list_files" -> ToolOutcome(listFiles())
+                "save_memory" -> ToolOutcome(saveMemory(args.getString("fact")))
+                "read_memory" -> ToolOutcome(readMemory())
+                "delete_memory" -> ToolOutcome(deleteMemory(args.getString("text")))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -222,6 +226,25 @@ class ToolExecutor(private val context: Context) {
         }
     }
 
+    // ---------- long-term memory ----------
+
+    private fun saveMemory(fact: String): String {
+        return if (memory.add(fact)) "در حافظه بلندمدت ذخیره شد: $fact"
+        else "این مورد از قبل در حافظه بود یا خالی بود"
+    }
+
+    private fun readMemory(): String {
+        val all = memory.all()
+        if (all.isEmpty()) return "حافظه بلندمدت خالی است"
+        return all.mapIndexed { i, e -> "${i + 1}. $e" }.joinToString("\n")
+    }
+
+    private fun deleteMemory(text: String): String {
+        val removed = memory.removeMatching(text)
+        return if (removed > 0) "$removed مورد از حافظه حذف شد"
+        else "موردی مطابق «$text» در حافظه پیدا نشد"
+    }
+
     companion object {
         /** Persian UI label for each tool, shown as an activity row in the chat. */
         fun label(name: String): String = when (name) {
@@ -234,6 +257,9 @@ class ToolExecutor(private val context: Context) {
             "write_file" -> "نوشتن فایل"
             "read_file" -> "خواندن فایل"
             "list_files" -> "فهرست فایل‌ها"
+            "save_memory" -> "ذخیره در حافظه"
+            "read_memory" -> "خواندن حافظه"
+            "delete_memory" -> "حذف از حافظه"
             else -> name
         }
 
@@ -273,6 +299,11 @@ class ToolExecutor(private val context: Context) {
                 put(fn("read_file", "Read a text file from the app's private workspace.",
                     JSONObject().put("name", strProp("File name")), listOf("name")))
                 put(fn("list_files", "List files in the app's private workspace.", none, emptyList()))
+                put(fn("save_memory", "Save an important, durable fact about the user into your long-term memory (their name, city, preferences, important people, goals, decisions). Save facts as you learn them; do not announce every save.",
+                    JSONObject().put("fact", strProp("One clear, self-contained fact about the user")), listOf("fact")))
+                put(fn("read_memory", "Read everything currently in your long-term memory about the user.", none, emptyList()))
+                put(fn("delete_memory", "Forget long-term memory entries that match a text fragment (when the user asks you to forget something, or a fact turns out to be wrong).",
+                    JSONObject().put("text", strProp("Fragment that matches the memory entries to remove")), listOf("text")))
             }
         }
     }
