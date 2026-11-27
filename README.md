@@ -1,9 +1,12 @@
-# Pocket Agent — ایجنت جیبی
+# Aura — آورا
 
-An Android AI agent app: a cloud AI model (via API) with real tools on the phone.
+**Aura** (formerly Pocket Agent) — an Android AI agent app: a cloud AI model (via API) with real tools on the phone.
 The model thinks; the app acts — research the web, run Python, control the phone, speak and listen, and report back.
 
-## Features (v8.1.0)
+## Features (v9.0.0)
+
+- **New brand: آورا (Aura)** — new name, new aurora-gradient adaptive launcher icon (with Android 13+ themed-icon support), gradient wordmark in the header
+- **UI polish** — animated aurora sweep line under the header while the agent works, gradient user bubbles, three staggered bouncing thinking dots, animated gradient progress bar on plan cards, gradient-bordered feature cards and composer (glows while typing/working), personalized composer placeholder
 
 - **Hardened AI client (per the provider's integration spec)** — up to 3 retries with exponential backoff (2s→4s, capped 5s) honoring `Retry-After`; daily-quota 429s are detected and reported with the 00:00 UTC reset time instead of pointless retries; `max_tokens` 8192; history is trimmed to a safe budget so long chats never overflow the provider's 32k-token context window
 - **Resilient web search** — Keenable first, automatic fallback to the keyless FreeSerp global index when it fails or returns nothing
