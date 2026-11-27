@@ -10,6 +10,7 @@ data class ChatMsg(
     val imagePath: String? = null,    // image attached to this message (generated or picked)
     val toolLabel: String? = null,    // for "tool-ui" activity rows
     val attachmentNote: String? = null, // on-device processing result, fed to the model
+    val filePath: String? = null,     // a file the agent delivered with this message
     val time: Long = System.currentTimeMillis()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -18,6 +19,7 @@ data class ChatMsg(
         imagePath?.let { put("imagePath", it) }
         toolLabel?.let { put("toolLabel", it) }
         attachmentNote?.let { put("attachmentNote", it) }
+        filePath?.let { put("filePath", it) }
         put("time", time)
     }
 
@@ -28,6 +30,7 @@ data class ChatMsg(
             imagePath = o.optString("imagePath").ifBlank { null },
             toolLabel = o.optString("toolLabel").ifBlank { null },
             attachmentNote = o.optString("attachmentNote").ifBlank { null },
+            filePath = o.optString("filePath").ifBlank { null },
             time = o.optLong("time", 0L)
         )
 
