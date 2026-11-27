@@ -18,7 +18,17 @@ data class ToolCall(val id: String, val name: String, val arguments: String)
 
 data class AiReply(val content: String?, val reasoning: String?, val toolCalls: List<ToolCall>)
 
-class AiException(message: String, val httpCode: Int = 0) : Exception(message)
+class AiException(
+    message: String,
+    val httpCode: Int = 0,
+    val retryAfterSeconds: Long = 0
+) : Exception(message) {
+    /** True when the provider says the DAILY allowance is exhausted —
+     *  retrying is pointless until the quota resets (00:00 UTC). */
+    val dailyCapReached: Boolean
+        get() = httpCode == 429 && listOf("daily", "allowance", "quota", "روزانه")
+            .any { message?.contains(it, ignoreCase = true) == true }
+}
 
 /** Live stream events while the model answers: visible text and thinking. */
 sealed interface StreamEvent {
@@ -98,7 +108,7 @@ class AiClient {
         )
         for ((provider, stream) in attempts) {
             var tries = 0
-            while (tries < 2) {
+            while (tries < 3) {
                 tries++
                 try {
                     pace(provider.paceMs)
@@ -109,15 +119,32 @@ class AiClient {
                     }
                 } catch (e: AiException) {
                     lastError = e
-                    if ((e.httpCode == 429 || e.httpCode == 503) && tries < 2) {
-                        delay(2500)
+                    // Daily allowance used up: no retry will pass before the
+                    // reset — move on to the next provider immediately.
+                    if (e.dailyCapReached) break
+                    if ((e.httpCode == 429 || e.httpCode == 503) && tries < 3) {
+                        // Honor Retry-After when present; otherwise exponential
+                        // backoff (2s, 4s), capped at 5s per the API's guidance.
+                        val wait = if (e.retryAfterSeconds in 1..10) {
+                            e.retryAfterSeconds * 1000
+                        } else {
+                            2000L * (1L shl (tries - 1))
+                        }
+                        delay(wait.coerceAtMost(5000))
                         continue
                     }
                     break
                 }
             }
         }
-        throw lastError ?: AiException("خطای ناشناخته از سرویس")
+        val err = lastError ?: AiException("خطای ناشناخته از سرویس")
+        if (err.dailyCapReached) {
+            throw AiException(
+                "سهمیه روزانه سرویس رایگان تمام شده است. سهمیه هر روز ساعت ۰۰:۰۰ UTC (حدود ۳:۳۰ بامداد به وقت ایران) دوباره شارژ می‌شود. بعد از آن دوباره تلاش کن.",
+                err.httpCode
+            )
+        }
+        throw err
     }
 
     private fun buildBody(
@@ -129,7 +156,7 @@ class AiClient {
     ): String = JSONObject().apply {
         put("model", provider.model)
         put("messages", messages)
-        put("max_tokens", 8000)
+        put("max_tokens", 8192)
         if (provider.reasoningParam) {
             put("reasoning", thinking)
         } else if (!thinking) {
@@ -168,7 +195,11 @@ class AiClient {
             call.execute().use { resp ->
                 val text = resp.body?.string() ?: ""
                 if (resp.code !in 200..299) {
-                    throw AiException(serverMessage(text) ?: "HTTP ${resp.code}", resp.code)
+                    throw AiException(
+                        serverMessage(text) ?: "HTTP ${resp.code}",
+                        resp.code,
+                        retryAfterSeconds(resp)
+                    )
                 }
                 val reply = parseReply(text)
                 reply.reasoning?.let { if (it.isNotBlank()) onEvent(StreamEvent.Reasoning(it)) }
@@ -207,7 +238,11 @@ class AiClient {
             call.execute().use { resp ->
                 if (resp.code !in 200..299) {
                     val text = resp.body?.string() ?: ""
-                    throw AiException(serverMessage(text) ?: "HTTP ${resp.code}", resp.code)
+                    throw AiException(
+                        serverMessage(text) ?: "HTTP ${resp.code}",
+                        resp.code,
+                        retryAfterSeconds(resp)
+                    )
                 }
                 val reader = resp.body?.byteStream()?.bufferedReader(Charsets.UTF_8)
                     ?: throw AiException("پاسخ خالی از سرویس")
@@ -293,6 +328,9 @@ class AiClient {
             toolCalls = calls
         )
     }
+
+    private fun retryAfterSeconds(resp: okhttp3.Response): Long =
+        resp.header("Retry-After")?.trim()?.toLongOrNull() ?: 0L
 
     private fun serverMessage(text: String): String? = try {
         val root = JSONObject(text)
