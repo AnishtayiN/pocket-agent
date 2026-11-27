@@ -361,7 +361,7 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                     JSONObject().put("text", strProp("Fragment that matches the memory entries to remove")), listOf("text")))
                 put(fn("process_file", "Extract and read the content of a file in the workspace: PDF text, plain-text/code files, or a CSV summary. Use it for files the user attached or that you wrote earlier when you need their full content.",
                     JSONObject().put("name", strProp("File name in the workspace")), listOf("name")))
-                put(fn("run_python", "Run a Python 3.11 code snippet on the device and get its stdout/stderr back. No interactive input; 25-second limit. Use it to test and debug code.",
+                put(fn("run_python", "Run a Python 3 code snippet on the device and get its stdout/stderr back. No interactive input; 25-second limit. Use it to test and debug code.",
                     JSONObject().put("code", strProp("Python code to execute")), listOf("code")))
                 put(fn("run_python_file", "Run a Python file from the workspace on the device and get its output or traceback back. This is your debug step after writing a .py file: run it, read the error, fix the file with write_file, run again.",
                     JSONObject().put("name", strProp("Python file name in the workspace, e.g. script.py")), listOf("name")))
