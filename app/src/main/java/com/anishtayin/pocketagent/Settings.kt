@@ -3,26 +3,24 @@ package com.anishtayin.pocketagent
 import android.content.Context
 import android.content.SharedPreferences
 
-/** App settings: AI provider (OpenAI-compatible), model and optional API key.
- *  Stored only on the device, never in the repo. */
+/** Internal AI provider config — deliberately NOT shown in the app UI.
+ *  Any OpenAI-compatible endpoint works; change here and rebuild. */
+object AiConfig {
+    const val BASE_URL = "https://api.apisfreellm.com/v1"
+    const val MODEL = "free-ai"
+    const val API_KEY = ""
+}
+
+/** User-facing settings: only the agent's identity lives here now. */
 class Settings(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("pocket_agent_settings", Context.MODE_PRIVATE)
 
-    var baseUrl: String
-        get() = prefs.getString("base_url", DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL
-        set(value) = prefs.edit().putString("base_url", value.trim().trimEnd('/')).apply()
-
-    var model: String
-        get() = prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
-        set(value) = prefs.edit().putString("model", value.trim()).apply()
-
-    var apiKey: String
-        get() = prefs.getString("api_key", "") ?: ""
-        set(value) = prefs.edit().putString("api_key", value.trim()).apply()
+    var agentName: String
+        get() = prefs.getString("agent_name", DEFAULT_AGENT_NAME) ?: DEFAULT_AGENT_NAME
+        set(value) = prefs.edit().putString("agent_name", value.trim()).apply()
 
     companion object {
-        const val DEFAULT_BASE_URL = "https://api.apisfreellm.com/v1"
-        const val DEFAULT_MODEL = "free-ai"
+        const val DEFAULT_AGENT_NAME = "جیبی"
     }
 }
