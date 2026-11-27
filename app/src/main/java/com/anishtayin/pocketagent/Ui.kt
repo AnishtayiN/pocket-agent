@@ -100,6 +100,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TipsAndUpdates
 import androidx.compose.material.icons.filled.Vibration
@@ -1558,6 +1559,7 @@ private fun toolIcon(name: String?): ImageVector = when (name) {
     "compose_sms" -> Icons.Filled.Sms
     "compose_email" -> Icons.Filled.Email
     "open_maps" -> Icons.Filled.Map
+    "company_reviews" -> Icons.Filled.Star
     else -> Icons.Filled.Build
 }
 
@@ -2252,7 +2254,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
                     Icon(Icons.Filled.TipsAndUpdates, contentDescription = null, tint = p.accent2, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "ایجنت جیبی — نسخه ۸٫۰٫۰",
+                        text = "ایجنت جیبی — نسخه ۸٫۱٫۰",
                         style = MaterialTheme.typography.bodySmall,
                         color = p.muted
                     )
