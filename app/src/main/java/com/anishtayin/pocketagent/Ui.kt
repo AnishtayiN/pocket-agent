@@ -1,6 +1,9 @@
 package com.anishtayin.pocketagent
 
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +19,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -47,12 +52,16 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Newspaper
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,7 +78,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -82,7 +91,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -90,29 +98,35 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val PocketColors = darkColorScheme(
-    primary = Color(0xFF22D3EE),
+private val PocketColors = lightColorScheme(
+    primary = Color(0xFF0891B2),
     onPrimary = Color(0xFFFFFFFF),
-    background = Color(0xFF04081A),
-    onBackground = Color(0xFFF1F5F9),
-    surface = Color(0xFF0B132B),
-    onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = Color(0xFF14213F),
-    onSurfaceVariant = Color(0xFFB9C6DC),
-    outlineVariant = Color(0xFF26365C)
+    background = Color(0xFFF2F6FB),
+    onBackground = Color(0xFF0A1628),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF0A1628),
+    surfaceVariant = Color(0xFFE7EEF7),
+    onSurfaceVariant = Color(0xFF54677F),
+    outlineVariant = Color(0xFFD5E0EE)
 )
 
-/** One accent family only: cyan -> azure. (Design rule: single accent, calibrated.) */
+/** One accent family only: cyan -> azure. */
 private val AccentBrush = Brush.linearGradient(
     listOf(Color(0xFF22D3EE), Color(0xFF0EA5C6), Color(0xFF2563EB))
 )
@@ -137,7 +151,7 @@ fun AgentApp(viewModel: AgentViewModel) {
     }
 }
 
-/** Slow-drifting ambient light orbs behind everything — depth without noise. */
+/** Slow-drifting ambient light orbs — soft depth on the light background. */
 @Composable
 private fun AmbientBackground() {
     val transition = rememberInfiniteTransition(label = "ambient")
@@ -150,7 +164,7 @@ private fun AmbientBackground() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF04081A))
+            .background(Color(0xFFF2F6FB))
     ) {
         Box(
             modifier = Modifier
@@ -158,7 +172,7 @@ private fun AmbientBackground() {
                 .offset(x = (-70 + drift * 46).dp, y = (-110).dp)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0x3322D3EE), Color.Transparent)
+                        listOf(Color(0x3822D3EE), Color.Transparent)
                     )
                 )
         )
@@ -169,7 +183,7 @@ private fun AmbientBackground() {
                 .offset(x = (120 - drift * 52).dp, y = (130).dp)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0x2E2563EB), Color.Transparent)
+                        listOf(Color(0x2A60A5FA), Color.Transparent)
                     )
                 )
         )
@@ -194,7 +208,7 @@ private fun AgentAvatar(size: Int, iconSize: Int) {
         ) {
             drawArc(
                 brush = Brush.sweepGradient(
-                    listOf(Color.Transparent, Color(0xFF22D3EE), Color.Transparent)
+                    listOf(Color.Transparent, Color(0xFF0EA5C6), Color.Transparent)
                 ),
                 startAngle = 0f,
                 sweepAngle = 360f,
@@ -205,7 +219,7 @@ private fun AgentAvatar(size: Int, iconSize: Int) {
         Box(
             modifier = Modifier
                 .size((size - 7).dp)
-                .shadow(12.dp, CircleShape)
+                .shadow(10.dp, CircleShape)
                 .clip(CircleShape)
                 .background(AccentBrush),
             contentAlignment = Alignment.Center
@@ -303,7 +317,7 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
         animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
         label = "dot"
     )
-    Surface(color = Color(0xB30B132B), tonalElevation = 6.dp) {
+    Surface(color = Color(0xE6FFFFFF), tonalElevation = 3.dp, shadowElevation = 3.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -324,7 +338,7 @@ private fun HeaderBar(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                             .size(8.dp)
                             .alpha(if (busy) dotAlpha else 1f)
                             .clip(CircleShape)
-                            .background(if (busy) Color(0xFFFBBF24) else Color(0xFF34D399))
+                            .background(if (busy) Color(0xFFF59E0B) else Color(0xFF10B981))
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
@@ -353,9 +367,9 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
     val suggestions = listOf(
         Suggestion("شارژ گوشیم چنده؟", Icons.Filled.BatteryFull),
         Suggestion("یه عکس از غروب کرمانشاه بساز", Icons.Filled.Image),
+        Suggestion("یه کد پایتون بنویس که عدد اول رو پیدا کنه", Icons.Filled.Code),
         Suggestion("اخبار امروز چیه؟", Icons.Filled.Newspaper),
-        Suggestion("ساعت و تاریخ امروز رو بگو", Icons.Filled.Schedule),
-        Suggestion("چه کارهایی می‌تونی برام بکنی؟", Icons.Filled.AutoAwesome)
+        Suggestion("ساعت و تاریخ امروز رو بگو", Icons.Filled.Schedule)
     )
     Column(
         modifier = modifier.padding(28.dp),
@@ -373,7 +387,7 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "ایجنت شخصی تو روی این گوشی‌ام. حافظه دارم و یادم می‌مونه، سرچ می‌کنم، عکس می‌سازم، فایل و عکس رو پردازش می‌کنم و به گوشی دسترسی دارم. یه کار بهم بده:",
+            text = "ایجنت شخصی تو روی این گوشی‌ام. حافظه دارم، سرچ می‌کنم، عکس می‌سازم، فایل و عکس رو پردازش می‌کنم و کد پایتون می‌نویسم، اجراش می‌کنم و دیباگ‌شده تحویلت می‌دم:",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -385,8 +399,9 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
             suggestions.forEach { s ->
                 Row(
                     modifier = Modifier
+                        .shadow(2.dp, RoundedCornerShape(50))
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0xCC14213F))
+                        .background(Color.White)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50))
                         .clickable { viewModel.send(s.text) }
                         .padding(horizontal = 13.dp, vertical = 9.dp),
@@ -415,8 +430,9 @@ private fun TypingBubble(status: String) {
     ) {
         Box(
             modifier = Modifier
+                .shadow(3.dp, RoundedCornerShape(20.dp))
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color(0xE60B132B))
+                .background(Color.White)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
@@ -471,6 +487,166 @@ private fun AttachedImage(path: String) {
     }
 }
 
+/** Renders assistant text with proper code blocks (``` fences): dark card,
+ *  language label, copy button, monospace, horizontal scroll. */
+@Composable
+private fun MessageContent(text: String) {
+    val parts = text.split("```")
+    Column {
+        parts.forEachIndexed { idx, part ->
+            if (idx % 2 == 1) {
+                CodeBlock(part)
+            } else if (part.isNotBlank()) {
+                Text(text = part.trim(), color = MaterialTheme.colorScheme.onSurface)
+            }
+            if (idx < parts.size - 1) Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+@Composable
+private fun CodeBlock(raw: String) {
+    val trimmed = raw.trim('\n')
+    val lines = trimmed.lines()
+    val first = lines.firstOrNull()?.trim().orEmpty()
+    val isLang = first.isNotEmpty() && first.length <= 12 &&
+        first.none { it.isWhitespace() } && lines.size > 1
+    val lang = if (isLang) first else "code"
+    val code = if (isLang) lines.drop(1).joinToString("\n") else trimmed
+    val clipboard = LocalClipboardManager.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF0B132B))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = lang,
+                color = Color(0xFF7DD3FC),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = { clipboard.setText(AnnotatedString(code)) },
+                modifier = Modifier.size(30.dp)
+            ) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = "کپی کد",
+                    tint = Color(0xFFB9C6DC),
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = code,
+                color = Color(0xFFE2E8F0),
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/** A file the agent delivered: icon, name, size, open & share actions. */
+@Composable
+private fun FileCard(path: String) {
+    val context = LocalContext.current
+    val file = remember(path) { File(path) }
+    if (!file.exists()) return
+    val ext = file.extension.lowercase()
+    val icon = when (ext) {
+        "jpg", "jpeg", "png", "webp", "gif" -> Icons.Filled.Image
+        "py", "html", "htm", "kt", "kts", "js", "ts", "css", "json", "md", "txt",
+        "java", "c", "cpp", "h", "cs", "go", "rs", "php", "rb", "swift", "sh",
+        "yaml", "yml", "sql", "dart" -> Icons.Filled.Code
+        else -> Icons.Filled.Description
+    }
+    fun fileUri() = FileProvider.getUriForFile(
+        context, context.packageName + ".fileprovider", file
+    )
+    fun mime() = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+    fun openFile() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(fileUri(), mime())
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "برنامه‌ای برای باز کردن این فایل نیست", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun shareFile() {
+        try {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = mime()
+                putExtra(Intent.EXTRA_STREAM, fileUri())
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "اشتراک‌گذاری فایل"))
+        } catch (e: Exception) {
+            Toast.makeText(context, "اشتراک‌گذاری ناموفق بود", Toast.LENGTH_SHORT).show()
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFFF0F7FA))
+            .border(1.dp, Color(0xFFBFE3EE), RoundedCornerShape(14.dp))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AccentBrush),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.width(11.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "فایل آماده است — ${file.length() / 1024} کیلوبایت",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Row {
+            TextButton(onClick = { openFile() }) {
+                Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("باز کردن")
+            }
+            TextButton(onClick = { shareFile() }) {
+                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("اشتراک‌گذاری")
+            }
+        }
+    }
+}
+
 @Composable
 private fun MessageRow(msg: ChatMsg) {
     when (msg.role) {
@@ -479,8 +655,8 @@ private fun MessageRow(msg: ChatMsg) {
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0x2614B8D4))
-                        .border(1.dp, Color(0x4022D3EE), RoundedCornerShape(50))
+                        .background(Color(0xFFE0F5FA))
+                        .border(1.dp, Color(0xFF9ADBE8), RoundedCornerShape(50))
                         .padding(horizontal = 12.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -494,7 +670,7 @@ private fun MessageRow(msg: ChatMsg) {
                     Text(
                         text = msg.toolLabel ?: "ابزار",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color(0xFF155E6B)
                     )
                 }
             }
@@ -507,7 +683,7 @@ private fun MessageRow(msg: ChatMsg) {
                 Box(
                     modifier = Modifier
                         .widthIn(max = 300.dp)
-                        .shadow(6.dp, RoundedCornerShape(20.dp))
+                        .shadow(5.dp, RoundedCornerShape(20.dp))
                         .clip(RoundedCornerShape(20.dp))
                         .background(UserBrush)
                         .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -542,20 +718,26 @@ private fun MessageRow(msg: ChatMsg) {
             ) {
                 Box(
                     modifier = Modifier
-                        .widthIn(max = 324.dp)
+                        .widthIn(max = 330.dp)
+                        .shadow(3.dp, RoundedCornerShape(20.dp))
                         .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xE60B132B))
+                        .background(Color.White)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
                     Column {
                         if (msg.content.isNotBlank()) {
-                            Text(text = msg.content, color = MaterialTheme.colorScheme.onSurface)
+                            MessageContent(msg.content)
                         }
                         val path = msg.imagePath
                         if (path != null) {
                             if (msg.content.isNotBlank()) Spacer(Modifier.height(9.dp))
                             AttachedImage(path)
+                        }
+                        val delivered = msg.filePath
+                        if (delivered != null) {
+                            Spacer(Modifier.height(9.dp))
+                            FileCard(delivered)
                         }
                         val t = timeLabel(msg.time)
                         if (t.isNotBlank()) {
@@ -608,8 +790,9 @@ private fun InputBar(viewModel: AgentViewModel) {
                 enabled = !busy && !processing,
                 modifier = Modifier
                     .size(50.dp)
+                    .shadow(3.dp, CircleShape)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(Color.White)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
             ) {
                 Icon(Icons.Filled.AttachFile, contentDescription = "پیوست")
@@ -626,7 +809,7 @@ private fun InputBar(viewModel: AgentViewModel) {
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("پیوست فایل (PDF، متن، CSV…)") },
+                    text = { Text("پیوست فایل (کد، PDF، متن…)") },
                     leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -639,9 +822,9 @@ private fun InputBar(viewModel: AgentViewModel) {
         Box(
             modifier = Modifier
                 .weight(1f)
-                .shadow(6.dp, RoundedCornerShape(28.dp))
+                .shadow(4.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
-                .background(Color(0xE60B132B))
+                .background(Color.White)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(28.dp))
         ) {
             TextField(
@@ -666,11 +849,11 @@ private fun InputBar(viewModel: AgentViewModel) {
         Box(
             modifier = Modifier
                 .size(50.dp)
-                .shadow(8.dp, CircleShape)
+                .shadow(7.dp, CircleShape)
                 .clip(CircleShape)
                 .background(
                     if (input.isNotBlank() && !busy) AccentBrush
-                    else Brush.linearGradient(listOf(Color(0xFF26365C), Color(0xFF26365C)))
+                    else Brush.linearGradient(listOf(Color(0xFFCBD8E8), Color(0xFFCBD8E8)))
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -694,7 +877,7 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            Surface(color = Color(0xB30B132B), tonalElevation = 6.dp) {
+            Surface(color = Color(0xE6FFFFFF), tonalElevation = 3.dp, shadowElevation = 3.dp) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -774,8 +957,9 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .shadow(2.dp, RoundedCornerShape(14.dp))
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xE60B132B))
+                            .background(Color.White)
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
                             .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -797,14 +981,14 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
                 item {
                     TextButton(
                         onClick = { viewModel.clearMemory() },
-                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFF87171))
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626))
                     ) { Text("پاک کردن کل حافظه") }
                 }
             }
             item {
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "ایجنت جیبی — نسخه ۳٫۰٫۰",
+                    text = "ایجنت جیبی — نسخه ۴٫۰٫۰",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
