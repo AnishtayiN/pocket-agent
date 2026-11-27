@@ -131,7 +131,11 @@ object Processing {
                         }
                     }
                 }
-                "txt", "md", "json", "log", "xml", "kt", "java", "py", "js", "html", "css" -> {
+                "txt", "md", "markdown", "json", "log", "xml", "html", "htm", "css", "scss",
+                "js", "mjs", "ts", "tsx", "jsx", "vue", "py", "pyw", "kt", "kts", "java",
+                "c", "h", "cpp", "cxx", "hpp", "cs", "go", "rs", "php", "rb", "swift",
+                "sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "cfg", "gradle",
+                "groovy", "sql", "dart", "lua", "r", "pl", "properties" -> {
                     val text = file.readText()
                     sb.appendLine("محتوای فایل:")
                     sb.appendLine(text.take(6000))
@@ -144,7 +148,21 @@ object Processing {
                     lines.take(6).forEach { sb.appendLine(it.take(300)) }
                 }
                 else -> {
-                    sb.appendLine("برای این نوع فایل (.$ext) استخراج متن پشتیبانی نمی‌شود؛ فقط مشخصات کلی در دسترس است.")
+                    // Unknown extension: if the content looks like text, read it as text
+                    // (source code often arrives with odd or missing extensions).
+                    val head = ByteArray(2048)
+                    val read = file.inputStream().use { it.read(head) }
+                    val slice = if (read > 0) head.copyOf(read) else ByteArray(0)
+                    val looksText = read >= 0 && !slice.contains(0) &&
+                        slice.toString(Charsets.UTF_8).count { it == '�' } <= slice.size / 50 + 1
+                    if (looksText) {
+                        val text = file.readText()
+                        sb.appendLine("محتوای فایل (به‌صورت متن خوانده شد):")
+                        sb.appendLine(text.take(6000))
+                        if (text.length > 6000) sb.appendLine("…(ادامه بریده شد)")
+                    } else {
+                        sb.appendLine("برای این نوع فایل (.$ext) استخراج متن پشتیبانی نمی‌شود؛ فقط مشخصات کلی در دسترس است.")
+                    }
                 }
             }
         } catch (e: Exception) {
