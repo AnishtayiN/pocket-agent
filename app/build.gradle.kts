@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.kotlinCompose)
+    alias(libs.plugins.chaquopy)
 }
 
 android {
@@ -12,8 +13,14 @@ android {
         applicationId = "com.anishtayin.pocketagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0.0"
+        versionCode = 4
+        versionName = "4.0.0"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+        python {
+            version = "3.11"
+        }
     }
 
     signingConfigs {
