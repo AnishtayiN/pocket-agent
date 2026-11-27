@@ -7,14 +7,18 @@ import org.json.JSONObject
 data class ChatMsg(
     val role: String,                 // "user" | "assistant" | "tool-ui"
     val content: String,
-    val imagePath: String? = null,    // generated image attached to this message
-    val toolLabel: String? = null     // for "tool-ui" activity rows
+    val imagePath: String? = null,    // image attached to this message (generated or picked)
+    val toolLabel: String? = null,    // for "tool-ui" activity rows
+    val attachmentNote: String? = null, // on-device processing result, fed to the model
+    val time: Long = System.currentTimeMillis()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("role", role)
         put("content", content)
         imagePath?.let { put("imagePath", it) }
         toolLabel?.let { put("toolLabel", it) }
+        attachmentNote?.let { put("attachmentNote", it) }
+        put("time", time)
     }
 
     companion object {
@@ -22,7 +26,9 @@ data class ChatMsg(
             role = o.optString("role", "assistant"),
             content = o.optString("content", ""),
             imagePath = o.optString("imagePath").ifBlank { null },
-            toolLabel = o.optString("toolLabel").ifBlank { null }
+            toolLabel = o.optString("toolLabel").ifBlank { null },
+            attachmentNote = o.optString("attachmentNote").ifBlank { null },
+            time = o.optLong("time", 0L)
         )
 
         fun listToJson(list: List<ChatMsg>): String {
