@@ -60,6 +60,7 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 "save_memory" -> ToolOutcome(saveMemory(args.getString("fact")))
                 "read_memory" -> ToolOutcome(readMemory())
                 "delete_memory" -> ToolOutcome(deleteMemory(args.getString("text")))
+                "process_file" -> ToolOutcome(processFile(args.getString("name")))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -226,6 +227,12 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
         }
     }
 
+    private suspend fun processFile(name: String): String {
+        val f = safeFile(name) ?: return "نام فایل مجاز نیست"
+        if (!f.exists()) return "فایل «$name» وجود ندارد"
+        return Processing.fileNote(context, f)
+    }
+
     // ---------- long-term memory ----------
 
     private fun saveMemory(fact: String): String {
@@ -260,6 +267,7 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
             "save_memory" -> "ذخیره در حافظه"
             "read_memory" -> "خواندن حافظه"
             "delete_memory" -> "حذف از حافظه"
+            "process_file" -> "پردازش فایل"
             else -> name
         }
 
@@ -304,6 +312,8 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 put(fn("read_memory", "Read everything currently in your long-term memory about the user.", none, emptyList()))
                 put(fn("delete_memory", "Forget long-term memory entries that match a text fragment (when the user asks you to forget something, or a fact turns out to be wrong).",
                     JSONObject().put("text", strProp("Fragment that matches the memory entries to remove")), listOf("text")))
+                put(fn("process_file", "Extract and read the content of a file in the workspace: PDF text, plain-text/code files, or a CSV summary. Use it for files the user attached or that you wrote earlier when you need their full content.",
+                    JSONObject().put("name", strProp("File name in the workspace")), listOf("name")))
             }
         }
     }
