@@ -1,12 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- orbit ring -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,22 L59,41 L78,35 L66,50 L82,58 L64,64 L70,84 L54,71 L38,84 L44,64 L26,58 L42,50 L30,35 L49,41 Z" />
+        android:pathData="M54,22 a32,32 0 1,0 0.01,0 z"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="22"
+                android:startY="22"
+                android:endX="86"
+                android:endY="86">
+                <item android:offset="0" android:color="#B322D3EE" />
+                <item android:offset="0.5" android:color="#66818CF8" />
+                <item android:offset="1" android:color="#B3C084FC" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- main spark: curved four-point star -->
+    <path android:pathData="M54,30 C56.2,43.5 61,48.6 74.5,54 C61,59.4 56.2,64.5 54,78 C51.8,64.5 47,59.4 33.5,54 C47,48.6 51.8,43.5 54,30 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="34"
+                android:startY="30"
+                android:endX="74"
+                android:endY="78">
+                <item android:offset="0" android:color="#FF22D3EE" />
+                <item android:offset="0.5" android:color="#FF818CF8" />
+                <item android:offset="1" android:color="#FFC084FC" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- small companion spark -->
+    <path android:pathData="M74,31 C74.9,35.4 76.6,37.1 81,38 C76.6,38.9 74.9,40.6 74,45 C73.1,40.6 71.4,38.9 67,38 C71.4,37.1 73.1,35.4 74,31 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="67"
+                android:startY="31"
+                android:endX="81"
+                android:endY="45">
+                <item android:offset="0" android:color="#FFE0F2FE" />
+                <item android:offset="1" android:color="#FFA5B4FC" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- tiny star dot -->
     <path
-        android:fillColor="#0E7C9C"
-        android:pathData="M54,48 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+        android:pathData="M36,70 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:fillColor="#CCF0FDFF" />
 </vector>
