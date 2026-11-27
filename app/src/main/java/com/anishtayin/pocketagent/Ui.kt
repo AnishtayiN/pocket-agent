@@ -68,9 +68,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FlashlightOn
@@ -80,19 +82,24 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TipsAndUpdates
 import androidx.compose.material.icons.filled.Vibration
@@ -535,8 +542,53 @@ private fun ChatScreen(viewModel: AgentViewModel, onOpenSettings: () -> Unit) {
                     )
                 }
             }
+            ThinkingModeChip(viewModel)
             InputBar(viewModel = viewModel)
         }
+    }
+}
+
+/** Deep-thinking ↔ fast-answer toggle, right above the composer. */
+@Composable
+private fun ThinkingModeChip(viewModel: AgentViewModel) {
+    val p = LocalPalette.current
+    val thinking by viewModel.thinkingMode
+    val busy by viewModel.isBusy
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(if (thinking) p.chipBg else p.softFill)
+                .border(1.dp, if (thinking) p.chipBorder else p.hairline, RoundedCornerShape(50))
+                .clickable(enabled = !busy) { viewModel.setThinkingMode(!thinking) }
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (thinking) Icons.Filled.Psychology else Icons.Filled.Bolt,
+                contentDescription = "تغییر حالت فکر",
+                modifier = Modifier.size(14.dp),
+                tint = if (thinking) p.accent2 else p.muted
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = if (thinking) "فکر عمیق" else "پاسخ سریع",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (thinking) p.chipText else p.muted
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (thinking) "تحقیق، فکر و بازبینی پاسخ" else "جواب مستقیم و سریع",
+            style = MaterialTheme.typography.labelSmall,
+            color = p.muted
+        )
     }
 }
 
@@ -640,6 +692,8 @@ private fun EmptyState(viewModel: AgentViewModel, modifier: Modifier = Modifier)
     val suggestions = listOf(
         Suggestion("شارژ گوشیم چنده؟", Icons.Filled.BatteryFull),
         Suggestion("هوای تهران الان چطوره؟", Icons.Filled.WbCloudy),
+        Suggestion("دلار امروز چند تومنه؟", Icons.Filled.CurrencyExchange),
+        Suggestion("یه QR کد از متن «سلام دنیا» بساز", Icons.Filled.QrCode2),
         Suggestion("فردا ساعت ۷ صبح بیدارم کن", Icons.Filled.Schedule),
         Suggestion("یه عکس از غروب کرمانشاه بساز", Icons.Filled.Image),
         Suggestion("یه کد پایتون بنویس که عدد اول رو پیدا کنه", Icons.Filled.Code),
@@ -1497,6 +1551,13 @@ private fun toolIcon(name: String?): ImageVector = when (name) {
     "get_network_info" -> Icons.Filled.Language
     "clipboard_read", "clipboard_write" -> Icons.Filled.ContentPaste
     "update_plan" -> Icons.Filled.Checklist
+    "create_qr" -> Icons.Filled.QrCode2
+    "get_exchange_rate" -> Icons.Filled.CurrencyExchange
+    "wikipedia_summary" -> Icons.Filled.MenuBook
+    "open_dialer" -> Icons.Filled.Phone
+    "compose_sms" -> Icons.Filled.Sms
+    "compose_email" -> Icons.Filled.Email
+    "open_maps" -> Icons.Filled.Map
     else -> Icons.Filled.Build
 }
 
@@ -1939,6 +2000,8 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
     val memories = viewModel.memoryEntries.toList()
     val mode by viewModel.themeMode
     val autoSpeak by viewModel.autoSpeak
+    val thinking by viewModel.thinkingMode
+    val context = LocalContext.current
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -2037,6 +2100,32 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
             }
             item {
                 Spacer(Modifier.height(14.dp))
+                SectionTitle("حالت پاسخ‌گویی")
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(p.surface)
+                        .border(1.dp, p.hairline, RoundedCornerShape(14.dp))
+                        .padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Psychology, contentDescription = null, tint = p.accent2, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(11.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("فکر عمیق", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = p.text)
+                        Text(
+                            "فکر کردن، تحقیق وب و بازبینی پاسخ‌ها؛ خاموش = جواب مستقیم و سریع API",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = p.muted
+                        )
+                    }
+                    Switch(checked = thinking, onCheckedChange = { viewModel.setThinkingMode(it) })
+                }
+            }
+            item {
+                Spacer(Modifier.height(14.dp))
                 SectionTitle("صدا")
                 Spacer(Modifier.height(6.dp))
                 Row(
@@ -2122,18 +2211,55 @@ private fun SettingsScreen(viewModel: AgentViewModel, onBack: () -> Unit) {
             }
             item {
                 Spacer(Modifier.height(14.dp))
+                SectionTitle("گفتگو")
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = {
+                        val path = viewModel.exportChat()
+                        if (path == null) {
+                            Toast.makeText(context, "گفتگویی برای خروجی گرفتن نیست", Toast.LENGTH_SHORT).show()
+                        } else {
+                            try {
+                                val file = File(path)
+                                val uri = FileProvider.getUriForFile(
+                                    context, context.packageName + ".fileprovider", file
+                                )
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        },
+                                        "خروجی گفتگو"
+                                    )
+                                )
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "اشتراک‌گذاری خروجی ممکن نشد", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("خروجی گرفتن از گفتگو (فایل متنی)")
+                }
+            }
+            item {
+                Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.TipsAndUpdates, contentDescription = null, tint = p.accent2, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "ایجنت جیبی — نسخه ۷٫۰٫۰",
+                        text = "ایجنت جیبی — نسخه ۸٫۰٫۰",
                         style = MaterialTheme.typography.bodySmall,
                         color = p.muted
                     )
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "تحقیق وب با بازبینی، پایتون روی گوشی، حافظه بلندمدت، پلن زنده کار، صدای دوطرفه، آب‌وهوا، آلارم و تایمر، تقویم، چراغ‌قوه و کنترل گوشی.",
+                    text = "فکر عمیق/پاسخ سریع، تحقیق وب با بازبینی، پایتون روی گوشی، حافظه بلندمدت، پلن زنده، صدای دوطرفه، QR، نرخ ارز، ویکی‌پدیا، آب‌وهوا، آلارم و تایمر، تقویم، تماس/پیامک/ایمیل، نقشه و چراغ‌قوه.",
                     style = MaterialTheme.typography.labelSmall,
                     color = p.muted
                 )
