@@ -1,29 +1,32 @@
-# Pocket Agent
+# Pocket Agent — ایجنت جیبی
 
 An Android AI agent app: a cloud AI model (via API) with real tools on the phone.
-The model thinks; the app acts — read device state, work with files, run code, and report back.
+The model thinks; the app acts — search the web, read pages, generate images, check the battery, work with files, and report back.
+
+## Features (v1.0.0)
+
+- **Agent loop** — OpenAI-compatible tool calling: the model plans, calls tools, reads results and continues until the task is done (up to 6 rounds)
+- **Tools**
+  - `web_search` / `web_fetch` — live web search and page reading via Keenable (keyless public tier)
+  - `generate_image` — image generation via Pollinations (keyless), shown right in the chat
+  - `get_battery_info` — charge %, charging status, temperature, voltage, health
+  - `get_device_info` — model, Android version, RAM, storage
+  - `get_current_time`, `write_file` / `read_file` / `list_files` — a private on-device workspace
+- **Any OpenAI-compatible provider** — base URL, model and optional API key are configurable in Settings. The default provider is free and keyless; the key (if any) is stored only on the device, never in this repo
+- **Persian RTL chat UI** (Material 3, dark), tool activity shown live, chat history persisted on the device
 
 ## Architecture
 
-- **Kotlin** app (Jetpack Compose UI) — native access to Android APIs, permissions and foreground services
-- **Agent loop** — send the conversation + tool definitions to the AI API, execute the tool calls the model returns, feed results back, repeat until the task is done
-- **Cloud AI API** — any OpenAI-compatible endpoint; base URL + key are configured in-app and are **never** committed to this repo
-- **Optional Rust core** — only if a heavy on-device component is added later (e.g. local model inference)
+- **Kotlin** + Jetpack Compose — native Android API access, no bridge tax
+- `AiClient` — minimal Chat Completions client with retry/backoff and ~1 request/second pacing
+- `ToolExecutor` — the tool implementations; `AgentViewModel` — the agent loop
 
-## Planned tools (v1)
+## Honest limits
 
-- Battery & device info (charge %, charging state, temperature, model, Android version) — no permission needed
-- File read/write inside the app workspace (storage access only with the user's grant)
-- Web search & page fetch
-- Script execution (embedded interpreter) for small coding tasks
-- More tools behind their Android runtime permissions, each granted explicitly by the user
+- The agent can only do what Android lets the app do — permissions are the ceiling
+- The default free provider may refuse some IPs/prompts; if it does, point Settings to another OpenAI-compatible provider
+- Release APKs are signed with a CI-generated keystore: uninstall before reinstalling a newer build
 
-## Ground rules
+## Build
 
-- The agent can only do what Android lets the app do — permissions are the ceiling, always
-- No API keys, tokens or personal data in this repository
-- Long tasks run in a foreground service so Android does not kill them
-
-## Status
-
-Repository created 2026-11-27. Next step: Android project scaffold (Gradle + Compose + agent loop skeleton).
+Open in Android Studio, or push a `v*` tag — GitHub Actions builds the release APK and attaches it to the Release.
