@@ -49,11 +49,21 @@ jobs:
         with:
           files: "PocketAgent-*.apk"
           body: |
-            ## Pocket Agent — ایجنت جیبی
+            ## Pocket Agent v7 — ایجنت جیبی
 
-            An Android AI agent with a name, a long-term memory and real tools on your phone:
-            live web search & page fetch, image generation, battery & device info, a private
-            file workspace — and it remembers you between conversations.
+            یک ایجنت کامل روی گوشی: فکر می‌کند، تحقیق می‌کند، کار را انجام می‌دهد و کامل تحویل می‌دهد.
 
-            - Persian RTL chat UI; the agent's name and memory are managed in Settings
-            - Note: the APK is signed with a CI-generated keystore, so uninstall the previous version before installing this one (app data is stored on-device)
+            ### تازه‌های نسخه ۷
+            - **صدای دوطرفه**: دیکته پیام با میکروفون (فارسی) + خواندن پاسخ‌ها با صدا (دکمه بلندگو، خواندن خودکار، ابزار speak)
+            - **تم تاریک کهکشانی + تم روشن**: انتخاب روشن/تاریک/سیستم، سوییچ سریع در هدر، پس‌زمینه aurora متحرک
+            - **پلن زنده کار**: چک‌لیست مراحل که ایجنت حین کار تیک می‌زند
+            - **کنترل واقعی گوشی**: آلارم و تایمر، رویداد تقویم، چراغ‌قوه، لرزش، کلیپ‌بورد، وضعیت شبکه، باز کردن لینک و اشتراک‌گذاری
+            - **آب‌وهوای زنده** برای هر شهر بدون کلید API
+            - حلقه ایجنت تا ۱۶ مرحله + بازبینی پاسخ‌های اطلاعاتی
+
+            ### قابلیت‌های اصلی
+            - تحقیق عمیق وب با منابع واقعی، اجرای پایتون روی گوشی و دیباگ خودکار، ساخت عکس
+            - پردازش عکس و فایل روی گوشی (OCR، PDF، کد)، حافظه بلندمدت، استریم زنده پاسخ و فکر
+            - رابط فارسی راست‌به‌چپ با مارک‌داون کامل و بلوک کد
+
+            نکته: APK با keystore موقت CI امضا می‌شود؛ قبل از نصب نسخه جدید، نسخه قبلی را حذف کنید.
