@@ -1,13 +1,25 @@
 package com.anishtayin.pocketagent
 
 import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.provider.AlarmClock
+import android.provider.CalendarContract
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +44,16 @@ data class ToolOutcome(
     val sources: List<String> = emptyList()
 )
 
-/** The agent's hands: device info, web (Keenable, keyless public tier),
- *  image generation (Pollinations, keyless), a private file workspace,
+/** The agent's hands: device info & controls (flashlight, vibration,
+ *  clipboard, network), web (Keenable, keyless), weather (wttr.in, keyless),
+ *  image generation (Pollinations, keyless), alarms/timer/calendar, opening
+ *  links & sharing, a speaking voice, a private file workspace, planning,
  *  and long-term memory about the user. */
-class ToolExecutor(private val context: Context, private val memory: MemoryStore) {
+class ToolExecutor(
+    private val context: Context,
+    private val memory: MemoryStore,
+    private val voice: Voice
+) {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -71,6 +89,26 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                 "process_file" -> ToolOutcome(processFile(args.getString("name")))
                 "run_python" -> ToolOutcome(runPython(args.getString("code")))
                 "run_python_file" -> ToolOutcome(runPythonFile(args.getString("name")))
+                "get_weather" -> getWeather(args.getString("city"))
+                "set_timer" -> ToolOutcome(setTimer(args.getInt("seconds"), args.optString("label")))
+                "set_alarm" -> ToolOutcome(setAlarm(args.getInt("hour"), args.getInt("minute"), args.optString("message")))
+                "add_calendar_event" -> ToolOutcome(
+                    addCalendarEvent(
+                        args.getString("title"),
+                        args.optString("description"),
+                        args.optInt("in_minutes", 60),
+                        args.optInt("duration_minutes", 60)
+                    )
+                )
+                "open_url" -> ToolOutcome(openUrl(args.getString("url")))
+                "share_text" -> ToolOutcome(shareText(args.getString("text")))
+                "speak" -> ToolOutcome(speak(args.getString("text")))
+                "set_flashlight" -> ToolOutcome(setFlashlight(args.getBoolean("on")))
+                "vibrate" -> ToolOutcome(vibrate(args.optInt("milliseconds", 300)))
+                "get_network_info" -> ToolOutcome(networkInfo())
+                "clipboard_read" -> clipboardRead()
+                "clipboard_write" -> clipboardWrite(args.getString("text"))
+                "update_plan" -> ToolOutcome(updatePlan(args.getString("plan")))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -356,6 +394,197 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
         }.trim()
     }
 
+    // ---------- weather (wttr.in, keyless) ----------
+
+    private suspend fun getWeather(city: String): ToolOutcome = withContext(Dispatchers.IO) {
+        val encoded = URLEncoder.encode(city.trim(), "UTF-8").replace("+", "%20")
+        val req = Request.Builder()
+            .url("https://wttr.in/$encoded?format=j1")
+            .header("Accept-Language", "fa")
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string() ?: ""
+            if (!resp.isSuccessful || text.isBlank()) {
+                return@withContext ToolOutcome("گرفتن آب‌وهوا ناموفق بود (HTTP ${resp.code})")
+            }
+            val root = try {
+                JSONObject(text)
+            } catch (e: Exception) {
+                return@withContext ToolOutcome("پاسخ آب‌وهوا قابل خواندن نبود")
+            }
+            val current = root.optJSONArray("current_condition")?.optJSONObject(0)
+                ?: return@withContext ToolOutcome("اطلاعات آب‌وهوای «$city» پیدا نشد")
+            val descFa = current.optJSONArray("lang_fa")?.optJSONObject(0)?.optString("value")
+            val desc = descFa?.ifBlank { null }
+                ?: current.optJSONArray("weatherDesc")?.optJSONObject(0)?.optString("value") ?: ""
+            val sb = StringBuilder("آب‌وهوای فعلی $city:\n")
+            sb.appendLine("وضعیت: $desc")
+            sb.appendLine("دما: ${current.optString("temp_C")}°C (حس واقعی: ${current.optString("FeelsLikeC")}°C)")
+            sb.appendLine("رطوبت: ${current.optString("humidity")}٪")
+            sb.appendLine("باد: ${current.optString("windspeedKmph")} کیلومتر بر ساعت")
+            sb.appendLine("دید افق: ${current.optString("visibility")} کیلومتر")
+            val today = root.optJSONArray("weather")?.optJSONObject(0)
+            if (today != null) {
+                sb.appendLine("امروز: کمینه ${today.optString("mintempC")}°C، بیشینه ${today.optString("maxtempC")}°C")
+            }
+            ToolOutcome(sb.toString().trim(), sources = listOf("https://wttr.in/$encoded"))
+        }
+    }
+
+    // ---------- device actions ----------
+
+    private fun launchIntent(intent: Intent): Boolean = try {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun setTimer(seconds: Int, label: String): String {
+        if (seconds !in 1..86400) return "مدت تایمر باید بین ۱ تا ۸۶۴۰۰ ثانیه باشد"
+        val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            if (label.isNotBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, label)
+        }
+        return if (launchIntent(intent)) "تایمر $seconds ثانیه‌ای${if (label.isNotBlank()) " با برچسب «$label»" else ""} تنظیم شد"
+        else "برنامه ساعت برای تنظیم تایمر در دسترس نیست"
+    }
+
+    private fun setAlarm(hour: Int, minute: Int, message: String): String {
+        if (hour !in 0..23 || minute !in 0..59) return "ساعت نامعتبر است"
+        val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour)
+            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            if (message.isNotBlank()) putExtra(AlarmClock.EXTRA_MESSAGE, message)
+        }
+        return if (launchIntent(intent)) "آلارم برای %02d:%02d تنظیم شد".format(hour, minute)
+        else "برنامه ساعت برای تنظیم آلارم در دسترس نیست"
+    }
+
+    private fun addCalendarEvent(title: String, description: String, inMinutes: Int, durationMinutes: Int): String {
+        val begin = System.currentTimeMillis() + inMinutes.coerceAtLeast(0) * 60_000L
+        val end = begin + durationMinutes.coerceAtLeast(5) * 60_000L
+        val intent = Intent(Intent.ACTION_INSERT).apply {
+            data = CalendarContract.Events.CONTENT_URI
+            putExtra(CalendarContract.Events.TITLE, title)
+            if (description.isNotBlank()) putExtra(CalendarContract.Events.DESCRIPTION, description)
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+            putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+        }
+        return if (launchIntent(intent)) "رویداد «$title» برای $inMinutes دقیقه دیگر در تقویم باز شد تا تأیید شود"
+        else "برنامه تقویم در دسترس نیست"
+    }
+
+    private fun openUrl(url: String): String {
+        val clean = url.trim()
+        if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+            return "فقط لینک‌های http/https باز می‌شوند"
+        }
+        return if (launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(clean)))) "لینک در مرورگر باز شد: $clean"
+        else "مرورگری برای باز کردن لینک پیدا نشد"
+    }
+
+    private fun shareText(text: String): String {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        return try {
+            context.startActivity(Intent.createChooser(intent, "اشتراک‌گذاری").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "منوی اشتراک‌گذاری باز شد"
+        } catch (e: Exception) {
+            "اشتراک‌گذاری ممکن نشد"
+        }
+    }
+
+    private fun speak(text: String): String {
+        return if (voice.speak(text)) "متن با صدا خوانده شد"
+        else "موتور گفتار روی این گوشی در دسترس نیست یا هنوز آماده نشده"
+    }
+
+    private fun setFlashlight(on: Boolean): String {
+        return try {
+            val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val id = cm.cameraIdList.firstOrNull { id ->
+                cm.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } ?: return "این گوشی چراغ‌قوه ندارد"
+            cm.setTorchMode(id, on)
+            if (on) "چراغ‌قوه روشن شد 🔦" else "چراغ‌قوه خاموش شد"
+        } catch (e: Exception) {
+            "کنترل چراغ‌قوه ممکن نشد: ${e.message ?: "نامشخص"}"
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun vibrate(milliseconds: Int): String {
+        val ms = milliseconds.coerceIn(50, 3000).toLong()
+        return try {
+            val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            } else {
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            "گوشی به مدت $ms میلی‌ثانیه لرزید"
+        } catch (e: Exception) {
+            "لرزش ممکن نشد"
+        }
+    }
+
+    private fun networkInfo(): String {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return "گوشی به هیچ شبکه‌ای وصل نیست (آفلاین)"
+            val caps = cm.getNetworkCapabilities(network) ?: return "اطلاعات شبکه در دسترس نیست"
+            val type = when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "وای‌فای"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "اینترنت سیم‌کارت"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "اترنت"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                else -> "نامشخص"
+            }
+            val validated = if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) "اتصال اینترنت تأیید شده" else "اتصال به اینترنت تأیید نشده"
+            "نوع اتصال: $type\nوضعیت: $validated"
+        } catch (e: Exception) {
+            "اطلاعات شبکه در دسترس نیست"
+        }
+    }
+
+    private suspend fun clipboardRead(): ToolOutcome = withContext(Dispatchers.Main) {
+        try {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip
+            val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+            if (text.isNullOrBlank()) ToolOutcome("کلیپ‌بورد خالی است یا متن ندارد")
+            else ToolOutcome("متن کلیپ‌بورد:\n${text.take(4000)}")
+        } catch (e: Exception) {
+            ToolOutcome("خواندن کلیپ‌بورد ممکن نشد")
+        }
+    }
+
+    private suspend fun clipboardWrite(text: String): ToolOutcome = withContext(Dispatchers.Main) {
+        try {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Pocket Agent", text))
+            ToolOutcome("متن در کلیپ‌بورد کپی شد")
+        } catch (e: Exception) {
+            ToolOutcome("کپی در کلیپ‌بورد ممکن نشد")
+        }
+    }
+
+    // ---------- planning ----------
+
+    /** The plan itself is rendered by the ViewModel as a live checklist card;
+     *  here we only validate and acknowledge it. */
+    private fun updatePlan(plan: String): String {
+        val steps = plan.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (steps.isEmpty()) return "پلن خالی است"
+        return "پلن ${steps.size} مرحله‌ای به کاربر نشان داده شد. بعد از هر مرحله، وضعیت را با update_plan به‌روز کن."
+    }
+
     // ---------- long-term memory ----------
 
     private fun saveMemory(fact: String): String {
@@ -394,6 +623,19 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
             "process_file" -> "پردازش فایل"
             "run_python" -> "اجرای پایتون"
             "run_python_file" -> "اجرا و دیباگ پایتون"
+            "get_weather" -> "آب‌وهوا"
+            "set_timer" -> "تنظیم تایمر"
+            "set_alarm" -> "تنظیم آلارم"
+            "add_calendar_event" -> "رویداد تقویم"
+            "open_url" -> "باز کردن لینک"
+            "share_text" -> "اشتراک‌گذاری متن"
+            "speak" -> "خواندن با صدا"
+            "set_flashlight" -> "چراغ‌قوه"
+            "vibrate" -> "لرزش گوشی"
+            "get_network_info" -> "وضعیت شبکه"
+            "clipboard_read" -> "خواندن کلیپ‌بورد"
+            "clipboard_write" -> "کپی در کلیپ‌بورد"
+            "update_plan" -> "پلن کار"
             else -> name
         }
 
@@ -446,6 +688,37 @@ class ToolExecutor(private val context: Context, private val memory: MemoryStore
                     JSONObject().put("code", strProp("Python code to execute")), listOf("code")))
                 put(fn("run_python_file", "Run a Python file from the workspace on the device and get its output or traceback back. This is your debug step after writing a .py file: run it, read the error, fix the file with write_file, run again.",
                     JSONObject().put("name", strProp("Python file name in the workspace, e.g. script.py")), listOf("name")))
+                put(fn("get_weather", "Get the CURRENT live weather for a city (temperature, feels-like, humidity, wind, today's min/max). Keyless and instant — prefer it over web search for weather questions.",
+                    JSONObject().put("city", strProp("City name in English, e.g. Tehran, Kermanshah, London")), listOf("city")))
+                put(fn("set_timer", "Set a countdown timer on the phone's clock app.",
+                    JSONObject().put("seconds", JSONObject().apply { put("type", "integer"); put("description", "Timer length in seconds (1..86400)") })
+                        .put("label", strProp("Optional timer label")), listOf("seconds")))
+                put(fn("set_alarm", "Set an alarm on the phone's clock app (24-hour time).",
+                    JSONObject().put("hour", JSONObject().apply { put("type", "integer"); put("description", "Hour, 0-23") })
+                        .put("minute", JSONObject().apply { put("type", "integer"); put("description", "Minute, 0-59") })
+                        .put("message", strProp("Optional alarm label")), listOf("hour", "minute")))
+                put(fn("add_calendar_event", "Create an event in the user's calendar app (opens pre-filled for the user to confirm).",
+                    JSONObject().put("title", strProp("Event title"))
+                        .put("description", strProp("Optional event description"))
+                        .put("in_minutes", JSONObject().apply { put("type", "integer"); put("description", "Minutes from now when the event starts (default 60)") })
+                        .put("duration_minutes", JSONObject().apply { put("type", "integer"); put("description", "Event length in minutes (default 60)") }),
+                    listOf("title")))
+                put(fn("open_url", "Open a http/https link in the user's browser (e.g. a source the user wants to see).",
+                    JSONObject().put("url", strProp("Full URL")), listOf("url")))
+                put(fn("share_text", "Open the Android share sheet with a text, so the user can send it to any app.",
+                    JSONObject().put("text", strProp("Text to share")), listOf("text")))
+                put(fn("speak", "Read a text aloud on the phone with the built-in voice (TTS). Use when the user asks you to say/read something out loud.",
+                    JSONObject().put("text", strProp("Text to speak (Persian preferred)")), listOf("text")))
+                put(fn("set_flashlight", "Turn the phone's flashlight (camera torch) on or off.",
+                    JSONObject().put("on", JSONObject().apply { put("type", "boolean"); put("description", "true = on, false = off") }), listOf("on")))
+                put(fn("vibrate", "Vibrate the phone briefly (e.g. as a notification the task is done).",
+                    JSONObject().put("milliseconds", JSONObject().apply { put("type", "integer"); put("description", "Duration 50..3000 ms") }), emptyList()))
+                put(fn("get_network_info", "Get the phone's current network connection type (Wi-Fi / cellular / offline) and whether internet access is validated.", none, emptyList()))
+                put(fn("clipboard_read", "Read the text currently on the user's clipboard (works while the app is in the foreground).", none, emptyList()))
+                put(fn("clipboard_write", "Copy a text to the user's clipboard.",
+                    JSONObject().put("text", strProp("Text to copy")), listOf("text")))
+                put(fn("update_plan", "Show/update a live task plan checklist in the chat for multi-step work. Each line is one step, prefixed with its status: '[x] ' done, '[~] ' in progress, '[ ] ' pending. Call it at the start of a multi-step task and after each step completes. Keep steps short.",
+                    JSONObject().put("plan", strProp("Full plan, one step per line, e.g.\n[x] جستجوی منابع\n[~] خواندن مقاله اصلی\n[ ] نوشتن جمع‌بندی")), listOf("plan")))
             }
         }
     }
