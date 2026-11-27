@@ -1,0 +1,60 @@
+name: Release APK
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Generate release keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/release.keystore" \
+            -storepass pocketagent -keypass pocketagent \
+            -alias pocket -keyalg RSA -keysize 2048 -validity 3650 \
+            -dname "CN=Pocket Agent, O=AnishtayiN"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PASSWORD: pocketagent
+          KEY_ALIAS: pocket
+          KEY_PASSWORD: pocketagent
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "PocketAgent-${{ github.ref_name }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-agent-apk
+          path: "PocketAgent-*.apk"
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "PocketAgent-*.apk"
+          body: |
+            ## Pocket Agent — ایجنت جیبی
+
+            An Android AI agent: a cloud AI model with real tools on your phone.
+
+            **v1.0.0**
+            - Full agent loop (OpenAI-compatible tool calling) with any provider — the default one is free and keyless, changeable in Settings
+            - Tools: live web search & page fetch (Keenable), image generation (Pollinations), battery & device info, date/time, private file workspace
+            - Persian RTL chat UI, chat history saved on device
+            - Note: the APK is signed with a CI-generated keystore, so uninstall before reinstalling a future build
