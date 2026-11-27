@@ -3,17 +3,19 @@
 An Android AI agent app: a cloud AI model (via API) with real tools on the phone.
 The model thinks; the app acts — search the web, read pages, generate images, check the battery, work with files, and report back.
 
-## Features (v1.0.0)
+## Features (v2.0.0)
 
-- **Agent loop** — OpenAI-compatible tool calling: the model plans, calls tools, reads results and continues until the task is done (up to 6 rounds)
+- **An agent with an identity** — it has a name (default «جیبی», changeable in Settings), a warm personal-assistant personality, and a **long-term memory**: durable facts about the user are saved via tools, injected into every session, and viewable/deletable in Settings
+- **Agent loop** — OpenAI-compatible tool calling: the model plans, calls tools, reads results and continues until the task is done (up to 8 rounds)
 - **Tools**
   - `web_search` / `web_fetch` — live web search and page reading via Keenable (keyless public tier)
   - `generate_image` — image generation via Pollinations (keyless), shown right in the chat
   - `get_battery_info` — charge %, charging status, temperature, voltage, health
   - `get_device_info` — model, Android version, RAM, storage
   - `get_current_time`, `write_file` / `read_file` / `list_files` — a private on-device workspace
-- **Any OpenAI-compatible provider** — base URL, model and optional API key are configurable in Settings. The default provider is free and keyless; the key (if any) is stored only on the device, never in this repo
-- **Persian RTL chat UI** (Material 3, dark), tool activity shown live, chat history persisted on the device
+  - `save_memory` / `read_memory` / `delete_memory` — the long-term memory
+- **Provider config is internal** (not shown in the app UI): any OpenAI-compatible endpoint, set in `AiConfig` — the default provider is free and keyless
+- **Persian RTL chat UI** (Material 3, dark, gradient avatar, typing indicator, suggestion chips), chat history persisted on the device
 
 ## Architecture
 
