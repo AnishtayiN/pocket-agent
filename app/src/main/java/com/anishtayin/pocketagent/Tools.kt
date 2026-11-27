@@ -125,6 +125,7 @@ class ToolExecutor(
                     composeEmail(args.getString("to"), args.optString("subject"), args.optString("body"))
                 )
                 "open_maps" -> ToolOutcome(openMaps(args.getString("query")))
+                "company_reviews" -> companyReviews(args.getString("query"))
                 else -> ToolOutcome("ابزار ناشناخته: $name")
             }
         } catch (e: Exception) {
@@ -194,7 +195,55 @@ class ToolExecutor(
         val date: String
     )
 
-    private suspend fun searchRaw(query: String, maxResults: Int): List<SearchHit> =
+    /** Search with automatic provider fallback: Keenable first, then the
+     *  keyless FreeSerp global index if Keenable fails or returns nothing. */
+    private suspend fun searchRaw(query: String, maxResults: Int): List<SearchHit> {
+        val primary = try {
+            keenableSearch(query, maxResults)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (primary.isNotEmpty()) return primary
+        return try {
+            freeSerpSearch(query, maxResults)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun freeSerpSearch(query: String, maxResults: Int): List<SearchHit> =
+        withContext(Dispatchers.IO) {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val req = Request.Builder()
+                .url("https://freeserp.ai/api.php?index=web&q=$encoded&size=${maxResults.coerceIn(1, 100)}")
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val root = JSONObject(text)
+                val results = root.optJSONArray("results") ?: return@withContext emptyList()
+                val hits = mutableListOf<SearchHit>()
+                for (i in 0 until results.length()) {
+                    val r = results.getJSONObject(i)
+                    val url = r.optString("url")
+                    if (url.isBlank()) continue
+                    val date = sequenceOf("published_at", "crawled_at")
+                        .map { r.optString(it) }
+                        .firstOrNull { it.isNotBlank() && it != "null" } ?: ""
+                    hits.add(
+                        SearchHit(
+                            title = r.optString("title"),
+                            url = url,
+                            snippet = r.optString("snippet"),
+                            date = date
+                        )
+                    )
+                }
+                hits
+            }
+        }
+
+    private suspend fun keenableSearch(query: String, maxResults: Int): List<SearchHit> =
         withContext(Dispatchers.IO) {
             val body = JSONObject().apply {
                 put("query", query)
@@ -730,6 +779,60 @@ class ToolExecutor(
         else "برنامه نقشه در دسترس نیست"
     }
 
+    // ---------- company reputation (Trustburn, keyless) ----------
+
+    private suspend fun companyReviews(query: String): ToolOutcome = withContext(Dispatchers.IO) {
+        val q = query.trim()
+        val looksDomain = q.contains('.') && !q.contains(' ')
+        val encoded = URLEncoder.encode(q, "UTF-8")
+        val url = if (looksDomain) {
+            "https://api.trustburn.com/company?domain=$encoded"
+        } else {
+            "https://api.trustburn.com/search?q=$encoded"
+        }
+        val req = Request.Builder().url(url).build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) {
+                return@withContext ToolOutcome("گرفتن اطلاعات اعتبار شرکت ناموفق بود (HTTP ${resp.code})")
+            }
+            val root = try {
+                JSONObject(text)
+            } catch (e: Exception) {
+                return@withContext ToolOutcome("پاسخ سرویس اعتبار قابل خواندن نبود")
+            }
+            if (!root.optBoolean("ok")) {
+                return@withContext ToolOutcome("شرکتی مطابق «$q» پیدا نشد")
+            }
+            fun describe(c: JSONObject): String = buildString {
+                appendLine("${c.optString("name")} (${c.optString("domain")})")
+                appendLine("امتیاز: ${c.optDouble("rating", 0.0)} از ۵ — ${c.optInt("reviews")} نظر")
+                if (c.optString("country").isNotBlank()) appendLine("کشور: ${c.optString("country")}")
+                append("پروفایل نظرات: ${c.optString("profile")}")
+            }
+            val single = root.optJSONObject("company")
+            if (single != null) {
+                return@withContext ToolOutcome(
+                    "اعتبار شرکت (Trustburn):\n" + describe(single),
+                    sources = listOf(single.optString("profile")).filter { it.isNotBlank() }
+                )
+            }
+            val results = root.optJSONArray("results")
+            if (results == null || results.length() == 0) {
+                return@withContext ToolOutcome("شرکتی مطابق «$q» پیدا نشد")
+            }
+            val sb = StringBuilder("نتایج اعتبار شرکت‌ها برای «$q» (Trustburn):\n")
+            val srcs = mutableListOf<String>()
+            for (i in 0 until minOf(results.length(), 5)) {
+                val c = results.getJSONObject(i)
+                sb.appendLine()
+                sb.appendLine(describe(c))
+                c.optString("profile").takeIf { it.isNotBlank() }?.let { srcs.add(it) }
+            }
+            ToolOutcome(sb.toString().trim(), sources = srcs)
+        }
+    }
+
     // ---------- long-term memory ----------
 
     private fun saveMemory(fact: String): String {
@@ -788,6 +891,7 @@ class ToolExecutor(
             "compose_sms" -> "پیش‌نویس پیامک"
             "compose_email" -> "پیش‌نویس ایمیل"
             "open_maps" -> "نقشه و مسیریابی"
+            "company_reviews" -> "اعتبار و نظرات شرکت"
             else -> name
         }
 
@@ -895,6 +999,8 @@ class ToolExecutor(
                     listOf("to")))
                 put(fn("open_maps", "Open the maps app searching for a place/address or showing directions to it.",
                     JSONObject().put("query", strProp("Place name or address, e.g. برج میلاد تهران")), listOf("query")))
+                put(fn("company_reviews", "Look up a company's public reputation: star rating (out of 5), number of reviews and its review-profile link (Trustburn index). Use for 'is X trustworthy / what do people say about X' questions about companies, brands or websites.",
+                    JSONObject().put("query", strProp("Company name or domain, e.g. Digikala or digikala.com")), listOf("query")))
             }
         }
     }
