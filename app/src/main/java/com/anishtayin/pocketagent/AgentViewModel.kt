@@ -220,7 +220,7 @@ class AgentViewModel(app: Application) : AndroidViewModel(app) {
         val real = messages.filter { it.role == "user" || it.role == "assistant" }
         if (real.isEmpty()) return null
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(Date())
-        val sb = StringBuilder("گفتگو با ${agentName.value} — ایجنت جیبی\n\n")
+        val sb = StringBuilder("گفتگو با ${agentName.value} — آورا\n\n")
         val timeFmt = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
         real.forEach { m ->
             val who = if (m.role == "user") "من" else agentName.value
