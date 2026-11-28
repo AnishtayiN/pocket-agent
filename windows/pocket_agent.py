@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-APP_NAME = "PocketAgent"
+APP_NAME = "Aura"
 POLLINATIONS_CHAT = "https://text.pollinations.ai/openai"
 POLLINATIONS_MODEL = "openai"
 KEENABLE_SEARCH = "https://api.keenable.ai/v1/search/public"
@@ -112,7 +112,7 @@ def http_json(url, payload, timeout=HTTP_TIMEOUT):
         data=data,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "PocketAgent-Windows/6.1",
+            "User-Agent": "Aura-Windows/9.1",
         },
         method="POST",
     )
@@ -122,7 +122,7 @@ def http_json(url, payload, timeout=HTTP_TIMEOUT):
 
 def http_get_bytes(url, timeout=120):
     req = urllib.request.Request(
-        url, headers={"User-Agent": "PocketAgent-Windows/6.1"}
+        url, headers={"User-Agent": "Aura-Windows/9.1"}
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
@@ -372,7 +372,7 @@ def start_ui():
     agent = Agent(settings, memory)
 
     root = tk.Tk()
-    root.title("ایجنت جیبی — Pocket Agent")
+    root.title("آورا — Aura")
     root.geometry("860x640")
     root.minsize(640, 480)
 
