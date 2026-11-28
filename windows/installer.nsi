@@ -1,6 +1,6 @@
-; Pocket Agent for Windows — NSIS installer (Windows 7-11, per-user, no admin)
+; Aura for Windows — NSIS installer (Windows 7-11, per-user, no admin)
 ; Build:  makensis /DVERSION=v6.1.0 /DFULLVERSION=6.1.0.0 installer.nsi
-; Expects PocketAgent.exe next to this script.
+; Expects Aura.exe next to this script.
 
 !ifndef VERSION
   !define VERSION "v0.0.0"
@@ -11,16 +11,16 @@
 
 !include "MUI2.nsh"
 
-Name "Pocket Agent"
-OutFile "PocketAgent-Setup-${VERSION}.exe"
-InstallDir "$LOCALAPPDATA\Programs\PocketAgent"
-InstallDirRegKey HKCU "Software\PocketAgent" "InstallDir"
+Name "Aura"
+OutFile "Aura-Setup-${VERSION}.exe"
+InstallDir "$LOCALAPPDATA\Programs\Aura"
+InstallDirRegKey HKCU "Software\Aura" "InstallDir"
 RequestExecutionLevel user
 Unicode true
 
 VIProductVersion "${FULLVERSION}"
-VIAddVersionKey "ProductName" "Pocket Agent"
-VIAddVersionKey "FileDescription" "Pocket Agent for Windows - AI agent"
+VIAddVersionKey "ProductName" "Aura"
+VIAddVersionKey "FileDescription" "Aura for Windows - AI agent"
 VIAddVersionKey "FileVersion" "${FULLVERSION}"
 VIAddVersionKey "LegalCopyright" "AnishtayiN"
 
@@ -35,33 +35,33 @@ VIAddVersionKey "LegalCopyright" "AnishtayiN"
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "PocketAgent.exe"
+  File "Aura.exe"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\PocketAgent" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent" \
-    "DisplayName" "Pocket Agent"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent" \
+  WriteRegStr HKCU "Software\Aura" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura" \
+    "DisplayName" "Aura"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura" \
     "UninstallString" "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent" \
-    "DisplayIcon" "$INSTDIR\PocketAgent.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura" \
+    "DisplayIcon" "$INSTDIR\Aura.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura" \
     "DisplayVersion" "${VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent" \
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura" \
     "Publisher" "AnishtayiN"
-  CreateDirectory "$SMPROGRAMS\Pocket Agent"
-  CreateShortcut "$SMPROGRAMS\Pocket Agent\Pocket Agent.lnk" "$INSTDIR\PocketAgent.exe"
-  CreateShortcut "$SMPROGRAMS\Pocket Agent\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
-  CreateShortcut "$DESKTOP\Pocket Agent.lnk" "$INSTDIR\PocketAgent.exe"
+  CreateDirectory "$SMPROGRAMS\Aura"
+  CreateShortcut "$SMPROGRAMS\Aura\Aura.lnk" "$INSTDIR\Aura.exe"
+  CreateShortcut "$SMPROGRAMS\Aura\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$DESKTOP\Aura.lnk" "$INSTDIR\Aura.exe"
 SectionEnd
 
 Section "Uninstall"
-  Delete "$INSTDIR\PocketAgent.exe"
+  Delete "$INSTDIR\Aura.exe"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\Pocket Agent\Pocket Agent.lnk"
-  Delete "$SMPROGRAMS\Pocket Agent\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\Pocket Agent"
-  Delete "$DESKTOP\Pocket Agent.lnk"
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PocketAgent"
-  DeleteRegKey HKCU "Software\PocketAgent"
+  Delete "$SMPROGRAMS\Aura\Aura.lnk"
+  Delete "$SMPROGRAMS\Aura\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\Aura"
+  Delete "$DESKTOP\Aura.lnk"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Aura"
+  DeleteRegKey HKCU "Software\Aura"
 SectionEnd
