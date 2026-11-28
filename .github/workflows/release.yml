@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   build:
-    name: Android APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,37 +36,45 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk "PocketAgent-${{ github.ref_name }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "Aura-${{ github.ref_name }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-agent-apk
-          path: "PocketAgent-*.apk"
+          path: "Aura-*.apk"
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: "PocketAgent-*.apk"
+          files: "Aura-*.apk"
           body: |
-            ## Pocket Agent — ایجنت جیبی
+            ## Aura v9 — آورا
 
-            An AI agent with a name, a long-term memory and real tools:
-            live web search & page fetch, image generation, on-device Python
-            (write → run → debug → deliver files), a private file workspace —
-            and it remembers you between conversations.
+            برنامه اسم و هویت تازه گرفت: **آورا (Aura)** — دستیار هوشمند شخصی تو.
 
-            **Android:** `PocketAgent-${{ github.ref_name }}.apk` — installs on
-            Android 7.0 and newer (API 24+). Signed with a CI-generated
-            keystore, so uninstall the previous version before installing
-            this one (app data is stored on-device).
+            ### تازه‌های نسخه ۹
+            - **اسم جدید: آورا** — کوتاه، خوش‌آهنگ و هم‌خوان با تم aurora برنامه (اسم ایجنت مثل قبل در تنظیمات قابل تغییر است)
+            - **آیکون کاملاً جدید**: جرقه گرادیانی فیروزه‌ای→بنفش با حلقه مدار روی پس‌زمینه کهکشانی + پشتیبانی آیکون تم‌شونده اندروید ۱۳+
+            - **UI خفن‌تر**:
+              - خط نور aurora متحرک زیر هدر هنگام کار ایجنت
+              - حباب پیام‌های کاربر با گرادیان
+              - سه نقطه ضربان‌دار هنگام فکر کردن
+              - نوار پیشرفت گرادیانی انیمیشنی روی کارت پلن
+              - حاشیه گرادیانی کادر پیام (هنگام تایپ/کار می‌درخشد) و کارت‌های قابلیت
+              - نام گرادیانی در هدر و placeholder شخصی‌سازی‌شده
 
-            **Windows:** `PocketAgent-Setup-${{ github.ref_name }}.exe` is the
-            installer for Windows 7 through 11 (per-user, no admin needed);
-            `PocketAgent-Portable-${{ github.ref_name }}.exe` is the same app
-            as a single portable file. The Windows edition has the same brain
-            and tools (web search, image generation, local Python, memory)
-            in a desktop window.
+            ### قابلیت‌های اصلی (از نسخه‌های قبل)
+            - حالت فکر عمیق/پاسخ سریع، حلقه ایجنت ۱۶ مرحله‌ای با بازبینی، پلن زنده، صدای دوطرفه
+            - تحقیق وب دولایه با منابع، پایتون روی گوشی، QR، نرخ ارز، ویکی‌پدیا، آب‌وهوا، اعتبار شرکت‌ها
+            - کنترل گوشی: آلارم/تایمر، تقویم، چراغ‌قوه، پیامک/ایمیل/تماس، نقشه
+            - تم تاریک کهکشانی + روشن، حافظه بلندمدت، خروجی گفتگو
+
+            نکته: APK با keystore موقت CI امضا می‌شود؛ قبل از نصب نسخه جدید، نسخه قبلی را حذف کنید.
+
+            ### تازه‌های نسخه ۹٫۱
+            - **نسخه ویندوز (۷ تا ۱۱)**: فایل `Aura-Setup` نصاب ویندوز و `Aura-Portable` نسخه پرتابل تک‌فایل — همان آورا روی دسکتاپ، با همان ابزارها (جستجوی وب، ساخت تصویر، اجرای پایتون، حافظه)
+            - **پشتیبانی از اندروید ۷ به بالا** (قبلاً اندروید ۸ به بالا بود)
 
   windows:
     name: Windows EXE
@@ -87,29 +94,29 @@ jobs:
       - name: Build portable EXE
         shell: pwsh
         run: |
-          pyinstaller --onefile --windowed --name PocketAgent windows/pocket_agent.py
-          Copy-Item dist/PocketAgent.exe "PocketAgent-Portable-${{ github.ref_name }}.exe"
+          pyinstaller --onefile --windowed --name Aura windows/pocket_agent.py
+          Copy-Item dist/Aura.exe "Aura-Portable-${{ github.ref_name }}.exe"
 
       - name: Build installer EXE (NSIS)
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
-          Copy-Item dist/PocketAgent.exe windows/PocketAgent.exe
+          Copy-Item dist/Aura.exe windows/Aura.exe
           $fv = "${{ github.ref_name }}".TrimStart("v") + ".0"
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=${{ github.ref_name }}" "/DFULLVERSION=$fv" windows/installer.nsi
-          Move-Item "windows/PocketAgent-Setup-${{ github.ref_name }}.exe" .
+          Move-Item "windows/Aura-Setup-${{ github.ref_name }}.exe" .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pocket-agent-windows
+          name: aura-windows
           path: |
-            PocketAgent-Portable-*.exe
-            PocketAgent-Setup-*.exe
+            Aura-Portable-*.exe
+            Aura-Setup-*.exe
 
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            PocketAgent-Portable-*.exe
-            PocketAgent-Setup-*.exe
+            Aura-Portable-*.exe
+            Aura-Setup-*.exe
